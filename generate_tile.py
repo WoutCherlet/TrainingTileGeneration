@@ -30,7 +30,7 @@ def read_trees(mesh_dir, pc_dir, alpha=None):
         trees[name] = (pc, o3d_mesh, tri_mesh)
     return trees
 
-def place_tree_in_plot(name, tree_mesh, plot_mesh, collision_manager):
+def place_tree_in_plot(name, tree_mesh, plot_mesh, collision_manager, trees):
 
     # start by placing tree at edge of plot
     translation = np.zeros((4,4), dtype=float)
@@ -46,39 +46,38 @@ def place_tree_in_plot(name, tree_mesh, plot_mesh, collision_manager):
     tree_mesh.apply_transform(bbox_transform)
     translation += bbox_transform
 
+    # move tree as close as possible to rest of plot
     placed = False
     distance_buffer = 0.05
     x_dir = True
-    i = 0
+    i = 1
     max_iterations = 100
 
     while not placed:
         # get distance of mesh to plot
-        min_distance, closest_name, distance_data = collision_manager.min_distance_single(tree_mesh, return_name=True, return_data=True)
+        min_distance, closest_name = collision_manager.min_distance_single(tree_mesh, return_name=True)
 
         if min_distance < distance_buffer:
             print(f"placed after { i } iterations")
             placed = True
         else:
-            # TODO: moving point to bbox center will most likely give more organic results, when moving closest points together we don't get a lot of overlap as gets stuck quickly getting two external points close together
-            # using bbox centers will give some randomness to it
-            closest_point_plot = distance_data.point(closest_name)[:2]
+            # move tree in direction of closest bbox center by min_distance
 
-            # external is name of current tree in distance data object
-            closest_point_tree = distance_data.point("__external")[:2]
+            bbox_xy_center_current = (tree_mesh.bounds[1][:2] + tree_mesh.bounds[0][:2]) / 2
+            _, _, closest_tree = trees[closest_name]
+            bbox_xy_center_closest = (closest_tree.bounds[1][:2] - closest_tree.bounds[0][:2]) / 2
 
-            offsets = closest_point_plot - closest_point_tree
-
-            sign_x = m.copysign(1, offsets[0])
-            sign_y = m.copysign(1, offsets[1])
-
-            trans = [sign_x*(abs(offsets[0])-distance_buffer/2), sign_y*(abs(offsets[1])-distance_buffer/2), 0]
+            # TODO: add noise to direction vector
+            direction_vector = bbox_xy_center_closest - bbox_xy_center_current
+            # unit vector scaled with min_distance ensures there is never a collision, as we move within sphere with radius min_distance
+            unit_vector = direction_vector / np.linalg.norm(direction_vector)
+            trans = [unit_vector[0]*min_distance, unit_vector[1]*min_distance, 0]
 
             bbox_transform = trimesh.transformations.translation_matrix(trans)
             tree_mesh.apply_transform(bbox_transform)
             translation += bbox_transform
         
-        if i > max_iterations:
+        if i >= max_iterations:
             print(f"placed after max iterations { max_iterations}")
             placed = True
         
@@ -107,6 +106,7 @@ def assemble_trees(trees, n_trees=10):
         # pick random tree
         # name = random.choice(trees_list)
         name = trees_list[i]
+        print(f"Placing tree {name}")
         trees_list.remove(name)
 
         _, _, tri_mesh = trees[name]
@@ -128,7 +128,7 @@ def assemble_trees(trees, n_trees=10):
             tri_mesh_plot = tri_mesh
             collision_manager.add_object(name, tri_mesh_plot)
         else:
-            tri_mesh_plot, translation = place_tree_in_plot(name, tri_mesh, tri_mesh_plot, collision_manager)
+            tri_mesh_plot, translation = place_tree_in_plot(name, tri_mesh, tri_mesh_plot, collision_manager, trees)
             o3d_transform += translation
 
         # TODO: save transform here and apply later to pointclouds to get final tile pointcloud
@@ -145,12 +145,10 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     plot.show()
 
 
-
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--mesh_directory", required=True)
     parser.add_argument("-p", "--pointcloud_directory", required=True)
+    parser.add_argument("-d", "--mesh_directory", default=None)
     parser.add_argument("-o", "--output_directory", default=None)
 
     args = parser.parse_args()
@@ -158,6 +156,13 @@ def main():
     if not os.path.exists(args.pointcloud_directory):
         print(f"Couldn't read input dir {args.pointcloud_directory}!")
         return
+    
+    if args.mesh_directory is None:
+        if not os.path.exists(os.path.join(args.pointcloud_directory, "alpha_complexes")):
+            print(f"No mesh directory provided and not found at {os.path.join(args.pointcloud_directory, 'alpha_complexes')}, exiting.")
+            return
+        else:
+            args.mesh_directory = os.path.join(args.pointcloud_directory, "alpha_complexes")
     
     if args.output_directory is not None:
         if not os.path.exists(args.output_directory):
