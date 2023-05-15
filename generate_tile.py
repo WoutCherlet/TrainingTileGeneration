@@ -30,7 +30,8 @@ def read_trees(mesh_dir, pc_dir, alpha=None):
         trees[name] = (pc, o3d_mesh, tri_mesh)
     return trees
 
-def place_tree_in_plot(name, tree_mesh, plot_mesh, collision_manager, trees):
+def place_tree_in_line(name, tree_mesh, plot_mesh, collision_manager, trees):
+    # TODO: place in grid formation, not just line
 
     # start by placing tree at edge of plot
     translation = np.zeros((4,4), dtype=float)
@@ -49,7 +50,6 @@ def place_tree_in_plot(name, tree_mesh, plot_mesh, collision_manager, trees):
     # move tree as close as possible to rest of plot
     placed = False
     distance_buffer = 0.05
-    x_dir = True
     i = 1
     max_iterations = 100
 
@@ -61,17 +61,22 @@ def place_tree_in_plot(name, tree_mesh, plot_mesh, collision_manager, trees):
             print(f"placed after { i } iterations")
             placed = True
         else:
-            # move tree in direction of closest bbox center by min_distance
-
+            # move tree in direction of closest bbox center by min_distance with little buffer
             bbox_xy_center_current = (tree_mesh.bounds[1][:2] + tree_mesh.bounds[0][:2]) / 2
             _, _, closest_tree = trees[closest_name]
             bbox_xy_center_closest = (closest_tree.bounds[1][:2] - closest_tree.bounds[0][:2]) / 2
 
-            # TODO: add noise to direction vector
             direction_vector = bbox_xy_center_closest - bbox_xy_center_current
             # unit vector scaled with min_distance ensures there is never a collision, as we move within sphere with radius min_distance
             unit_vector = direction_vector / np.linalg.norm(direction_vector)
-            trans = [unit_vector[0]*min_distance, unit_vector[1]*min_distance, 0]
+
+            # add noise to x and y and renormalize
+            noisy_vector = [unit_vector[0] + random.uniform(-0.5, 0.5), unit_vector[1] + random.uniform(-0.5, 0.5)]
+            noisy_unit_vector = noisy_vector / np.linalg.norm(noisy_vector)
+
+            trans_distance = min_distance - distance_buffer / 2
+
+            trans = [noisy_unit_vector[0]*trans_distance, noisy_unit_vector[1]*trans_distance, 0]
 
             bbox_transform = trimesh.transformations.translation_matrix(trans)
             tree_mesh.apply_transform(bbox_transform)
@@ -82,8 +87,7 @@ def place_tree_in_plot(name, tree_mesh, plot_mesh, collision_manager, trees):
             placed = True
         
         i += 1
-        x_dir = not x_dir
-    
+
     collision_manager.add_object(name, tree_mesh)
     plot_mesh += tree_mesh
 
@@ -140,7 +144,7 @@ def assemble_trees(trees, n_trees=10):
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     trees = read_trees(mesh_dir, pc_dir, alpha=alpha)
 
-    plot = assemble_trees(trees, n_trees=3)
+    plot = assemble_trees(trees, n_trees=10)
 
     plot.show()
 
