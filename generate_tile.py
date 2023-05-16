@@ -31,8 +31,6 @@ def read_trees(mesh_dir, pc_dir, alpha=None):
     return trees
 
 def place_tree_in_line(name, tree_mesh, plot_mesh, collision_manager, trees):
-    # TODO: place in grid formation, not just line
-
     # start by placing tree at edge of plot
     translation = np.zeros((4,4), dtype=float)
 
@@ -88,14 +86,161 @@ def place_tree_in_line(name, tree_mesh, plot_mesh, collision_manager, trees):
         
         i += 1
 
-    collision_manager.add_object(name, tree_mesh)
     plot_mesh += tree_mesh
 
     return plot_mesh, translation
 
+def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, max_y_plot):
+    # start by placing tree at edge of plot
+    translation = np.zeros((4,4), dtype=float)
+
+    min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
+
+    bbox_transform = trimesh.transformations.translation_matrix(np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, -min_z_tree]))
+
+    tree_mesh.apply_transform(bbox_transform)
+    translation += bbox_transform
+
+    # move tree as close as possible to rest of plot
+    placed = True
+    distance_buffer = 0.05
+    i = 1
+    max_iterations = 100
+
+    while not placed:
+        # get distance of mesh to plot
+        if collision_manager_plot is not None:
+            min_distance_plot, closest_name_plot = collision_manager_plot.min_distance_single(tree_mesh, return_name=True)
+        else:
+            min_distance_plot = 1e9 # cant use inf because of mult with 0
+            closest_name_plot = None
+
+        # get distance of mesh to row
+        if max_x_row != 0:
+            min_distance_row, closest_name_row = collision_manager_row.min_distance_single(tree_mesh, return_name=True)
+        else:
+            min_distance_row = 1e9 # cant use inf because of mult with 0
+            closest_name_row = None
+
+        min_distance = min(min_distance_plot, min_distance_row)
+
+        if min_distance < distance_buffer:
+            print(f"placed after { i } iterations")
+            placed = True
+        else:
+            # move tree in direction of linear combination of closest bbox center of plot and row by min_distance with little buffer
+            bbox_xy_center_current = (tree_mesh.bounds[1][:2] + tree_mesh.bounds[0][:2]) / 2
+
+            if closest_name_plot is not None:
+                _, _, closest_tree_plot = trees[closest_name_plot]
+                bbox_xy_center_closest_plot = (closest_tree_plot.bounds[1][:2] - closest_tree_plot.bounds[0][:2]) / 2
+                direction_vector_plot = np.array(bbox_xy_center_closest_plot - bbox_xy_center_current)
+            else:
+                direction_vector_plot = np.array([0,0])
+
+            if closest_name_row is not None:
+                _, _, closest_tree_row= trees[closest_name_row]
+                bbox_xy_center_closest_row = (closest_tree_row.bounds[1][:2] - closest_tree_row.bounds[0][:2]) / 2
+                direction_vector_row = np.array(bbox_xy_center_closest_row - bbox_xy_center_current)
+            else:
+                direction_vector_row = np.array([0,0])
+                
+            # weighted by closest distance
+            direction_vector = min_distance_plot**2 * direction_vector_plot + min_distance_row * direction_vector_row
+            unit_vector = direction_vector / np.linalg.norm(direction_vector)
+
+            # add noise to x and y and renormalize
+            noisy_vector = [unit_vector[0] + random.uniform(-0.5, 0.5), unit_vector[1] + random.uniform(-0.5, 0.5)]
+            noisy_unit_vector = noisy_vector / np.linalg.norm(noisy_vector)
+
+            trans_distance = min_distance - distance_buffer / 2
+
+            trans = [unit_vector[0]*trans_distance, unit_vector[1]*trans_distance, 0]
+
+            bbox_transform = trimesh.transformations.translation_matrix(trans)
+            tree_mesh.apply_transform(bbox_transform)
+            translation += bbox_transform
+        
+        if i >= max_iterations:
+            print(f"placed after max iterations { max_iterations}")
+            placed = True
+        
+        i += 1
+
+    max_x_row = tree_mesh.bounds[1][0]
+    collision_manager_row.add_object(name, tree_mesh)
+
+    return tree_mesh, translation, max_x_row
 
 
-def assemble_trees(trees, n_trees=10):
+def assemble_trees_grid(trees, n_trees=9):
+    transforms = {}
+
+    trees_list = list(trees.keys())
+
+    tri_mesh_plot = None
+
+    n_row = m.floor(m.sqrt(n_trees))
+
+    for i in range(n_trees):
+        # pick random tree
+        name = random.choice(trees_list)
+        trees_list.remove(name)
+        _, _, tri_mesh = trees[name]
+
+        # save all transforms for this tree to single matrix
+        o3d_transform = np.zeros((4,4), dtype=float)
+
+        # generate random rotation around z axis
+        rot_angle = m.radians(random.randrange(360))
+        rot_matrix = np.identity(4, dtype=float)
+        rot_matrix[:2,:2] = [[m.cos(rot_angle), -m.sin(rot_angle)], [m.sin(rot_angle),m.cos(rot_angle)]]
+
+        # save rotation and apply to trimesh mesh
+        o3d_transform += rot_matrix
+        tri_mesh.apply_transform(rot_matrix)
+
+
+        if i == 0:
+            # start plot at 0,0,0
+            print(f"Placing tree {name}")
+            min_x_mesh, min_y_mesh, min_z_mesh = tri_mesh.bounds[0]
+            origin_translation = trimesh.transformations.translation_matrix(np.array([-min_x_mesh, -min_y_mesh, -min_z_mesh]))
+            tri_mesh.apply_transform(origin_translation)
+            tri_mesh_plot = tri_mesh
+            collision_manager_row = trimesh.collision.CollisionManager()
+            collision_manager_row.add_object(name, tri_mesh)
+            collision_manager_plot = None
+            max_x_row = tri_mesh.bounds[1][0]
+            max_y_plot = 0
+            collision_meshes = {}
+            collision_meshes[name] = tri_mesh
+        else:
+            new_row = i % n_row == 0
+            if new_row:
+                print(f"starting new row (i={i})")
+                max_x_row = 0
+                max_y_plot = tri_mesh_plot.bounds[1][1]
+                if collision_manager_plot is None:
+                    collision_manager_plot = trimesh.collision.CollisionManager()
+                row_objects = collision_manager_row._objs.copy()
+                for object in row_objects:
+                    collision_manager_plot.add_object(object, collision_meshes[object])
+                    collision_manager_row.remove_object(object)
+            print(f"Placing tree {name}")
+            
+            tree_mesh, translation, max_x_row = place_tree_in_grid(name, tri_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, max_y_plot)
+            collision_meshes[name] = tree_mesh
+            tri_mesh_plot += tree_mesh
+            o3d_transform += translation
+
+        # save_transforms
+        transforms[name] = o3d_transform
+    
+    return tri_mesh_plot, transforms
+
+
+def assemble_trees_line(trees, n_trees=9):
     transforms = []
 
     trees_list = list(trees.keys())
@@ -104,16 +249,19 @@ def assemble_trees(trees, n_trees=10):
 
     collision_manager = trimesh.collision.CollisionManager()
 
-    for i in range(n_trees):
-        o3d_transform = np.zeros((4,4), dtype=float)
+    n_row = m.floor(m.sqrt(n_trees))
 
+    for i in range(n_trees):
+        
         # pick random tree
         # name = random.choice(trees_list)
         name = trees_list[i]
         print(f"Placing tree {name}")
         trees_list.remove(name)
-
         _, _, tri_mesh = trees[name]
+
+        # save all transforms for this tree to single matrix
+        o3d_transform = np.zeros((4,4), dtype=float)
 
         # generate random rotation around z axis
         rot_angle = m.radians(random.randrange(360))
@@ -132,19 +280,39 @@ def assemble_trees(trees, n_trees=10):
             tri_mesh_plot = tri_mesh
             collision_manager.add_object(name, tri_mesh_plot)
         else:
-            tri_mesh_plot, translation = place_tree_in_plot(name, tri_mesh, tri_mesh_plot, collision_manager, trees)
+            tri_mesh_plot, translation = place_tree_in_line(name, tri_mesh, tri_mesh_plot, collision_manager, trees)
             o3d_transform += translation
 
         # TODO: save transform here and apply later to pointclouds to get final tile pointcloud
     
     return tri_mesh_plot
 
-
-
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     trees = read_trees(mesh_dir, pc_dir, alpha=alpha)
 
-    plot = assemble_trees(trees, n_trees=10)
+    print(f"Read {len(trees)} trees")
+
+    plot, transforms = assemble_trees_grid(trees, n_trees=9)
+    
+    merged_plot = None
+    # TODO: fix transforms not being correct on open3d
+    for name in transforms:
+        # apply transforms to open3d and merge
+
+        pc, _, _ = trees[name]
+        transform = transforms[name]
+        # transform_tensor = o3d.core.Tensor(transform)
+        pc = pc.transform(transform)
+
+        # ugly code but for some reason o3d errors when appending to empty pointcloud
+        if merged_plot is None:
+            # copy constructor
+            merged_plot = o3d.geometry.PointCloud(pc)
+        else:
+            merged_plot += pc
+        continue
+
+    o3d.visualization.draw_geometries([merged_plot])
 
     plot.show()
 
