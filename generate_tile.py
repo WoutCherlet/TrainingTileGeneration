@@ -292,10 +292,9 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
     print(f"Read {len(trees)} trees")
 
-    plot, transforms = assemble_trees_grid(trees, n_trees=9)
+    plot, transforms = assemble_trees_grid(trees, n_trees=4)
     
     merged_plot = None
-    # TODO: fix transforms not being correct on open3d
     for name in transforms:
         # apply transforms to open3d and merge
 
