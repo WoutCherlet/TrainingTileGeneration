@@ -92,17 +92,18 @@ def place_tree_in_line(name, tree_mesh, plot_mesh, collision_manager, trees):
 
 def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, max_y_plot):
     # start by placing tree at edge of plot
-    translation = np.zeros((4,4), dtype=float)
+    total_translation = np.array([0.0,0.0,0.0])
 
     min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
 
-    bbox_transform = trimesh.transformations.translation_matrix(np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, -min_z_tree]))
+    initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, -min_z_tree])
+    bbox_transform = trimesh.transformations.translation_matrix(initial_translation)
 
     tree_mesh.apply_transform(bbox_transform)
-    translation += bbox_transform
+    total_translation += initial_translation
 
     # move tree as close as possible to rest of plot
-    placed = True
+    placed = False
     distance_buffer = 0.05
     i = 1
     max_iterations = 100
@@ -155,11 +156,11 @@ def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manage
 
             trans_distance = min_distance - distance_buffer / 2
 
-            trans = [unit_vector[0]*trans_distance, unit_vector[1]*trans_distance, 0]
+            trans = [noisy_unit_vector[0]*trans_distance, noisy_unit_vector[1]*trans_distance, 0]
 
             bbox_transform = trimesh.transformations.translation_matrix(trans)
             tree_mesh.apply_transform(bbox_transform)
-            translation += bbox_transform
+            total_translation += trans
         
         if i >= max_iterations:
             print(f"placed after max iterations { max_iterations}")
@@ -170,7 +171,9 @@ def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manage
     max_x_row = tree_mesh.bounds[1][0]
     collision_manager_row.add_object(name, tree_mesh)
 
-    return tree_mesh, translation, max_x_row
+    translation_matrix = trimesh.transformations.translation_matrix(total_translation)
+
+    return tree_mesh, translation_matrix, max_x_row
 
 
 def assemble_trees_grid(trees, n_trees=9):
@@ -189,7 +192,7 @@ def assemble_trees_grid(trees, n_trees=9):
         _, _, tri_mesh = trees[name]
 
         # save all transforms for this tree to single matrix
-        o3d_transform = np.zeros((4,4), dtype=float)
+        o3d_transform = np.identity(4, dtype=float)
 
         # generate random rotation around z axis
         rot_angle = m.radians(random.randrange(360))
@@ -197,7 +200,7 @@ def assemble_trees_grid(trees, n_trees=9):
         rot_matrix[:2,:2] = [[m.cos(rot_angle), -m.sin(rot_angle)], [m.sin(rot_angle),m.cos(rot_angle)]]
 
         # save rotation and apply to trimesh mesh
-        o3d_transform += rot_matrix
+        o3d_transform = np.matmul(rot_matrix, o3d_transform)
         tri_mesh.apply_transform(rot_matrix)
 
 
@@ -208,6 +211,9 @@ def assemble_trees_grid(trees, n_trees=9):
             origin_translation = trimesh.transformations.translation_matrix(np.array([-min_x_mesh, -min_y_mesh, -min_z_mesh]))
             tri_mesh.apply_transform(origin_translation)
             tri_mesh_plot = tri_mesh
+            o3d_transform = np.matmul(origin_translation, o3d_transform)
+
+            # init plot metrics and collision managers
             collision_manager_row = trimesh.collision.CollisionManager()
             collision_manager_row.add_object(name, tri_mesh)
             collision_manager_plot = None
@@ -217,6 +223,7 @@ def assemble_trees_grid(trees, n_trees=9):
             collision_meshes[name] = tri_mesh
         else:
             new_row = i % n_row == 0
+            # on new row: update plot metrics and collision managers
             if new_row:
                 print(f"starting new row (i={i})")
                 max_x_row = 0
@@ -227,12 +234,13 @@ def assemble_trees_grid(trees, n_trees=9):
                 for object in row_objects:
                     collision_manager_plot.add_object(object, collision_meshes[object])
                     collision_manager_row.remove_object(object)
+            
             print(f"Placing tree {name}")
             
             tree_mesh, translation, max_x_row = place_tree_in_grid(name, tri_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, max_y_plot)
             collision_meshes[name] = tree_mesh
             tri_mesh_plot += tree_mesh
-            o3d_transform += translation
+            o3d_transform = np.matmul(translation, o3d_transform)
 
         # save_transforms
         transforms[name] = o3d_transform
@@ -311,9 +319,11 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
             merged_plot += pc
         continue
 
+    
+    plot.show()
+
     o3d.visualization.draw_geometries([merged_plot])
 
-    plot.show()
 
 
 def main():
