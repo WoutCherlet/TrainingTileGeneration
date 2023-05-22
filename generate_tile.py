@@ -7,6 +7,8 @@ import math as m
 import numpy as np
 import open3d as o3d
 import trimesh
+import matplotlib.pyplot as plt
+from perlin_numpy import generate_fractal_noise_2d, generate_perlin_noise_2d
 
 def read_trees(mesh_dir, pc_dir, alpha=None):
     trees = {}
@@ -333,6 +335,40 @@ def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
     return terrain_cloud
 
+def add_terrain_perlin_noise(plot_cloud, height=0.0, points_per_meter = 10):
+    # get dimension of plot cloud
+    max_x, max_y, _ = plot_cloud.get_max_bound()
+    min_x, min_y, _ = plot_cloud.get_min_bound()
+
+    nx = round((max_x - min_x) * points_per_meter)
+    ny = round((max_y - min_y) * points_per_meter)
+
+    res = 4
+
+    nx = nx - (nx % res)
+    ny = ny - (ny % res)
+
+    perlin_noise = generate_perlin_noise_2d((ny, nx), (res, res))
+
+    x = np.linspace(min_x, max_x, num = nx)
+    y = np.linspace(min_y, max_y, num = ny)
+    xv, yv = np.meshgrid(x, y)
+
+
+    points_xy = np.array([xv.flatten(), yv.flatten()]).T
+    z_arr = perlin_noise.flatten()
+    points_3d = np.column_stack((points_xy, z_arr))
+
+    plt.imshow(perlin_noise, cmap='gray', interpolation='lanczos')
+    plt.colorbar()
+    plt.show()
+
+    vector_3d = o3d.utility.Vector3dVector(points_3d)
+
+    terrain_cloud = o3d.geometry.PointCloud(vector_3d)
+
+    return terrain_cloud
+
 
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     trees = read_trees(mesh_dir, pc_dir, alpha=alpha)
@@ -363,7 +399,7 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     # add flat terrain
     # TODO: noisy terrain
     # TODO: mesh of terrain for collision detection
-    terrain_cloud = add_terrain_flat(merged_plot)
+    terrain_cloud = add_terrain_perlin_noise(merged_plot)
     merged_plot += terrain_cloud
 
     
