@@ -312,6 +312,30 @@ def assemble_trees_grid(trees, n_trees=9, debug=False):
     
     return tri_mesh_plot, transforms
 
+
+def get_trunk_location(pointcloud):
+
+    # get axis aligned bounding box
+    aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
+
+    # slice bottom meter of bounding box
+    min_bound_bbox = aaligned_bbox.get_min_bound()
+    max_bound_bbox = aaligned_bbox.get_max_bound()
+    max_bound_bbox[2] = min_bound_bbox[2] + 1
+    aaligned_bbox.max_bound = max_bound_bbox
+
+    # crop pointcloud to bottom bbox
+    cropped_pointcloud = pointcloud.crop(aaligned_bbox)
+
+    cropped_bbox = cropped_pointcloud.get_axis_aligned_bounding_box()
+
+    # TODO: get convex hull from 2d projection, but retain 3d points, use convex hull to set height dependent on closest point
+
+    center_x, center_y = cropped_bbox.get_center()[:2]
+    # Temporary: get convex hull center
+    return [center_x, center_y, min_bound_bbox[2]]
+
+
 def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
     # get dimension of plot cloud
@@ -335,39 +359,110 @@ def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
     return terrain_cloud
 
-def add_terrain_perlin_noise(plot_cloud, height=0.0, points_per_meter = 10):
+def add_terrain(plot_cloud, trunk_locations):
     # get dimension of plot cloud
     max_x, max_y, _ = plot_cloud.get_max_bound()
     min_x, min_y, _ = plot_cloud.get_min_bound()
 
-    nx = round((max_x - min_x) * points_per_meter)
-    ny = round((max_y - min_y) * points_per_meter)
+    POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
 
-    res = 4
+    nx = round((max_x - min_x) * POINTS_PER_METER)
+    ny = round((max_y - min_y) * POINTS_PER_METER)
 
-    nx = nx - (nx % res)
-    ny = ny - (ny % res)
+    # constants for noise generation
+    RES = 4
+    LACUNARITY = 2
+    OCTAVES = 4
 
-    perlin_noise = generate_perlin_noise_2d((ny, nx), (res, res))
+    # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
+    shape_factor = RES*(LACUNARITY**(OCTAVES-1))
+    perlin_nx = nx - (nx % shape_factor) + shape_factor
+    perlin_ny = ny - (ny % shape_factor) + shape_factor
 
+    perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
+    perlin_noise = perlin_noise[:ny, :nx]
+    SCALE = 1.5
+    perlin_noise = perlin_noise * SCALE
+
+    # get influence map and height map of trunks to adapt terrain to trunk heights and locations
+    influence_map, height_map = trunk_height_influence_map(min_x, min_y, ny, nx, POINTS_PER_METER, trunk_locations=trunk_locations)
+    final_xy_map = influence_map * height_map + (np.ones(influence_map.shape, dtype=float) - influence_map) * perlin_noise
+
+    # get xy grid
     x = np.linspace(min_x, max_x, num = nx)
     y = np.linspace(min_y, max_y, num = ny)
     xv, yv = np.meshgrid(x, y)
-
-
+    
+    # apply height map
     points_xy = np.array([xv.flatten(), yv.flatten()]).T
-    z_arr = perlin_noise.flatten()
+    z_arr = final_xy_map.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
 
-    plt.imshow(perlin_noise, cmap='gray', interpolation='lanczos')
-    plt.colorbar()
-    plt.show()
+    # visualization
+    # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
+    # plt.colorbar()
+    # plt.show()
 
+    # to pointcloud
     vector_3d = o3d.utility.Vector3dVector(points_3d)
-
     terrain_cloud = o3d.geometry.PointCloud(vector_3d)
 
     return terrain_cloud
+
+def influence_function(index, total_points):
+    x = index/total_points
+    return 1/(1 + (x/(1-x))**2)
+
+def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_locations):
+    # create trunk_locations map
+
+    influence_map = np.zeros((ny, nx), dtype= float)
+    height_map = np.zeros((ny, nx), dtype=float)
+
+    print(min_x, min_y)
+
+    for tree in trunk_locations:
+        # TODO: change this to convex hull
+
+        center = trunk_locations[tree]
+        height = center[2]
+
+        print(tree)
+        print(center)
+
+        closest_index_x = int(np.round((center[0] - min_x ) * points_per_meter))
+        closest_index_y = int(np.round((center[1] - min_y ) * points_per_meter))
+
+        influence_map[closest_index_y, closest_index_x] = 1.0
+
+        height_map[closest_index_y, closest_index_x] = height
+        
+        # set influence around trunk centers in square form
+        TOTAL_POINTS = 20
+        for index_offset in range(1, TOTAL_POINTS):
+            for x in range(closest_index_x-index_offset, closest_index_x+index_offset+1):
+                influence_map[closest_index_y-index_offset, x] = influence_function(index_offset, TOTAL_POINTS)
+                influence_map[closest_index_y+index_offset, x] = influence_function(index_offset, TOTAL_POINTS)
+
+                height_map[closest_index_y-index_offset, x] = height
+                height_map[closest_index_y+index_offset, x] = height
+
+            for y in range(closest_index_y-index_offset+1, closest_index_y+index_offset):
+                influence_map[y, closest_index_x-index_offset] = influence_function(index_offset, TOTAL_POINTS)
+                influence_map[y, closest_index_x+index_offset] = influence_function(index_offset, TOTAL_POINTS)
+
+                height_map[y, closest_index_x-index_offset] = height
+                height_map[y, closest_index_x+index_offset] = height
+
+        
+
+    # temp: visualize
+    plt.matshow(influence_map, cmap='gray', interpolation='nearest')
+    plt.colorbar()
+    plt.show()
+
+    return influence_map, height_map
+
 
 
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
@@ -377,9 +472,9 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
     plot, transforms = assemble_trees_grid(trees, n_trees=4, debug=True)
     
-    # apply derived transforms to pointcloud 
-
+    # apply derived transforms to pointcloud and get trunk locations
     merged_plot = None
+    trunk_locations = {}
     for name in transforms:
         # apply transforms to open3d and merge
 
@@ -387,6 +482,9 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         transform = transforms[name]
         # transform_tensor = o3d.core.Tensor(transform)
         pc = pc.transform(transform)
+
+        trunk_location = get_trunk_location(pc)
+        trunk_locations[name] = trunk_location
 
         # ugly code but for some reason o3d errors when appending to empty pointcloud
         if merged_plot is None:
@@ -396,16 +494,16 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
             merged_plot += pc
         continue
 
-    # add flat terrain
-    # TODO: noisy terrain
+    # add noisy terrain
     # TODO: mesh of terrain for collision detection
-    terrain_cloud = add_terrain_perlin_noise(merged_plot)
+    terrain_cloud = add_terrain(merged_plot, trunk_locations)
     merged_plot += terrain_cloud
 
-    
-    plot.show()
+    # plot.show()
 
     o3d.visualization.draw_geometries([merged_plot])
+
+    # TODO: write tiles here?
 
 
 def main():
