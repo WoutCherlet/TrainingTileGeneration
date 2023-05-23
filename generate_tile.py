@@ -380,7 +380,7 @@ def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
     return terrain_cloud
 
-def add_terrain(plot_cloud, trunk_locations):
+def add_terrain(plot_cloud, trunk_hulls):
     # get dimension of plot cloud
     max_x, max_y, _ = plot_cloud.get_max_bound()
     min_x, min_y, _ = plot_cloud.get_min_bound()
@@ -406,7 +406,7 @@ def add_terrain(plot_cloud, trunk_locations):
     perlin_noise = perlin_noise * SCALE
 
     # get influence map and height map of trunks to adapt terrain to trunk heights and locations
-    influence_map, height_map = trunk_height_influence_map(min_x, min_y, ny, nx, POINTS_PER_METER, trunk_locations=trunk_locations)
+    influence_map, height_map = trunk_height_influence_map_convex(min_x, min_y, ny, nx, POINTS_PER_METER, trunk_hulls=trunk_hulls)
     final_xy_map = influence_map * height_map + (np.ones(influence_map.shape, dtype=float) - influence_map) * perlin_noise
 
     # get xy grid
@@ -432,7 +432,9 @@ def add_terrain(plot_cloud, trunk_locations):
 
 def influence_function(index, total_points):
     x = index/total_points
-    return 1/(1 + (x/(1-x))**2)
+    # return 1/(1 + (x/(1-x))**2)  # reverse S shape, seems to give too much of "pedestal" kind of form
+    return -(x-1)**3 # simple exponential-like curve 
+    # TODO: use exponential? will never get 0 so no div by 0 errors eg e^-4*x is practically equivalent to above
 
 def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_locations):
     # TODO: account for multiple trunks close to each other, now just set to height of last tree
@@ -479,16 +481,66 @@ def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_loc
 
     return influence_map, height_map
 
-def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_hulls):
+def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, trunk_hulls):
     # create trunk_locations map
 
     influence_map = np.zeros((ny, nx), dtype= float)
     height_map = np.zeros((ny, nx), dtype=float)
 
-    for tree in trunk_hulls:
-        # TODO: change this to convex hull
+    # used to keep track of influence of seen points on each points height, to do order independent weighted average
+    total_past_influence_map = np.zeros((ny, nx), dtype=float)
 
+    for tree in trunk_hulls:
         hull = trunk_hulls[tree]
+
+        # TODO: if points inside hull: set their influence to 1 and height to -np.inf to easily detect (or None? )
+
+        # TODO: plan: for each point in hull: set influence for each point around it
+        # if influence already set, average current height with set height, weighted with set and current influence + set influence to max of influences
+
+        for point in hull:
+            cur_height = point[2]
+            
+            closest_idx_x = int(np.round((point[0] - min_x ) * points_per_meter))
+            closest_idx_y = int(np.round((point[1] - min_y ) * points_per_meter))
+
+            # height = weighted average between old height and current height, based on influence
+            height_map[closest_idx_y, closest_idx_x] = (total_past_influence_map[closest_idx_y, closest_idx_x]*height_map[closest_idx_y, closest_idx_x] + 1.0*cur_height) / (total_past_influence_map[closest_idx_y, closest_idx_x] + 1.0)
+            influence_map[closest_idx_y, closest_idx_x] = 1.0
+            total_past_influence_map[closest_idx_y, closest_idx_y] += 1
+
+            # set influence around trunk centers in square form
+            TOTAL_POINTS = 70
+            for idx_offset in range(1, TOTAL_POINTS):
+                cur_influence = influence_function(idx_offset, TOTAL_POINTS)
+
+                y_idx_n = closest_idx_y-idx_offset
+                y_idx_p = closest_idx_y+idx_offset
+                x_idx_n = closest_idx_x-idx_offset
+                x_idx_p = closest_idx_x+idx_offset
+
+                # square sides in x direction
+                for x in range(max(x_idx_n, 0), min(x_idx_p+1, nx)):
+                    if y_idx_n >= 0:
+                        height_map[y_idx_n, x] = (total_past_influence_map[y_idx_n, x]*height_map[y_idx_n, x] + cur_influence*cur_height) / (total_past_influence_map[y_idx_n, x] + cur_influence)
+                        influence_map[y_idx_n, x] = max(cur_influence, influence_map[y_idx_n, x])
+                        total_past_influence_map[y_idx_n, x] += cur_influence
+                    if y_idx_p < ny:
+                        height_map[y_idx_p, x] = (total_past_influence_map[y_idx_p, x]*height_map[y_idx_p, x] + cur_influence*cur_height) / (total_past_influence_map[y_idx_p, x] + cur_influence)
+                        influence_map[y_idx_p, x] = max(cur_influence, influence_map[y_idx_p, x])
+                        total_past_influence_map[y_idx_p, x] += cur_influence
+
+                # square sides in y direction, excluding corners
+                for y in range(max(y_idx_n+1,0), min(y_idx_p, ny)):
+                    if x_idx_n >= 0:
+                        height_map[y, x_idx_n] = (total_past_influence_map[y, x_idx_n]*height_map[y, x_idx_n] + cur_influence*cur_height) / (total_past_influence_map[y, x_idx_n] + cur_influence)
+                        influence_map[y, x_idx_n] = max(cur_influence, influence_map[y, x_idx_n])
+                        total_past_influence_map[y, x_idx_n] += cur_influence
+
+                    if x_idx_p < nx:
+                        height_map[y, x_idx_p] = (total_past_influence_map[y, x_idx_p]*height_map[y, x_idx_p] + cur_influence*cur_height) / (total_past_influence_map[y, x_idx_p] + cur_influence)
+                        influence_map[y, x_idx_p] = max(cur_influence, influence_map[y, x_idx_p])
+                        total_past_influence_map[y, x_idx_p] += cur_influence
 
     
     # temp: visualize
@@ -508,7 +560,7 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     
     # apply derived transforms to pointcloud and get trunk locations
     merged_plot = None
-    trunk_locations = {}
+    trunk_hulls = {}
     for name in transforms:
         # apply transforms to open3d and merge
 
@@ -517,10 +569,8 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         # transform_tensor = o3d.core.Tensor(transform)
         pc = pc.transform(transform)
 
-        trunk_location = get_trunk_location(pc)
-        trunk_locations[name] = trunk_location
-
-        get_trunk_convex_hull(pc)
+        trunk_hull = get_trunk_convex_hull(pc)
+        trunk_hulls[name] = trunk_hull
 
         # ugly code but for some reason o3d errors when appending to empty pointcloud
         if merged_plot is None:
@@ -529,17 +579,21 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         else:
             merged_plot += pc
         continue
-    
-    return
+
 
     # add noisy terrain
     # TODO: mesh of terrain for collision detection
-    terrain_cloud = add_terrain(merged_plot, trunk_locations)
-    merged_plot += terrain_cloud
+    terrain_cloud = add_terrain(merged_plot, trunk_hulls)
+    # merged_plot += terrain_cloud
+
+    
+    # temp for debug
+    # terrain_cloud.paint_uniform_color([1,0,0])
+    # merged_plot.paint_uniform_color([0,0,1])
 
     # plot.show()
 
-    o3d.visualization.draw_geometries([merged_plot])
+    o3d.visualization.draw_geometries([merged_plot, terrain_cloud])
 
     # TODO: write tiles here?
 
