@@ -8,6 +8,7 @@ import numpy as np
 import open3d as o3d
 import trimesh
 import matplotlib.pyplot as plt
+from scipy.spatial import ConvexHull
 from perlin_numpy import generate_fractal_noise_2d, generate_perlin_noise_2d
 
 def read_trees(mesh_dir, pc_dir, alpha=None):
@@ -314,7 +315,6 @@ def assemble_trees_grid(trees, n_trees=9, debug=False):
 
 
 def get_trunk_location(pointcloud):
-
     # get axis aligned bounding box
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
 
@@ -329,11 +329,32 @@ def get_trunk_location(pointcloud):
 
     cropped_bbox = cropped_pointcloud.get_axis_aligned_bounding_box()
 
-    # TODO: get convex hull from 2d projection, but retain 3d points, use convex hull to set height dependent on closest point
-
     center_x, center_y = cropped_bbox.get_center()[:2]
     # Temporary: get convex hull center
     return [center_x, center_y, min_bound_bbox[2]]
+
+def get_trunk_convex_hull(pointcloud, slice_height=0.5):  
+    # get axis aligned bounding box
+    aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
+
+    # slice bottom part of bounding box
+    min_bound_bbox = aaligned_bbox.get_min_bound()
+    max_bound_bbox = aaligned_bbox.get_max_bound()
+    max_bound_bbox[2] = min_bound_bbox[2] + slice_height
+    aaligned_bbox.max_bound = max_bound_bbox
+
+    # crop pointcloud to bottom bbox
+    cropped_pointcloud = pointcloud.crop(aaligned_bbox)
+
+    cropped_bbox = cropped_pointcloud.get_axis_aligned_bounding_box()
+
+    points_3d = np.asarray(cropped_pointcloud.points)
+    points_projected_2d = points_3d[:,:2]
+
+    hull = ConvexHull(points_projected_2d)
+    
+    hull_points_3d = points_3d[hull.vertices]
+    return hull_points_3d
 
 
 def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
@@ -399,9 +420,9 @@ def add_terrain(plot_cloud, trunk_locations):
     points_3d = np.column_stack((points_xy, z_arr))
 
     # visualization
-    # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
-    # plt.colorbar()
-    # plt.show()
+    plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
+    plt.colorbar()
+    plt.show()
 
     # to pointcloud
     vector_3d = o3d.utility.Vector3dVector(points_3d)
@@ -414,21 +435,17 @@ def influence_function(index, total_points):
     return 1/(1 + (x/(1-x))**2)
 
 def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_locations):
-    # create trunk_locations map
+    # TODO: account for multiple trunks close to each other, now just set to height of last tree
+    # probably just skip as hull function should replace this one anyway
 
+    # create trunk_locations map
     influence_map = np.zeros((ny, nx), dtype= float)
     height_map = np.zeros((ny, nx), dtype=float)
 
-    print(min_x, min_y)
-
     for tree in trunk_locations:
-        # TODO: change this to convex hull
 
         center = trunk_locations[tree]
         height = center[2]
-
-        print(tree)
-        print(center)
 
         closest_index_x = int(np.round((center[0] - min_x ) * points_per_meter))
         closest_index_y = int(np.round((center[1] - min_y ) * points_per_meter))
@@ -438,7 +455,7 @@ def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_loc
         height_map[closest_index_y, closest_index_x] = height
         
         # set influence around trunk centers in square form
-        TOTAL_POINTS = 20
+        TOTAL_POINTS = 50
         for index_offset in range(1, TOTAL_POINTS):
             for x in range(closest_index_x-index_offset, closest_index_x+index_offset+1):
                 influence_map[closest_index_y-index_offset, x] = influence_function(index_offset, TOTAL_POINTS)
@@ -454,15 +471,32 @@ def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_loc
                 height_map[y, closest_index_x-index_offset] = height
                 height_map[y, closest_index_x+index_offset] = height
 
-        
-
+    
     # temp: visualize
-    plt.matshow(influence_map, cmap='gray', interpolation='nearest')
+    # plt.matshow(influence_map, cmap='gray')
+    # plt.colorbar()
+    # plt.show()
+
+    return influence_map, height_map
+
+def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_hulls):
+    # create trunk_locations map
+
+    influence_map = np.zeros((ny, nx), dtype= float)
+    height_map = np.zeros((ny, nx), dtype=float)
+
+    for tree in trunk_hulls:
+        # TODO: change this to convex hull
+
+        hull = trunk_hulls[tree]
+
+    
+    # temp: visualize
+    plt.matshow(influence_map, cmap='gray')
     plt.colorbar()
     plt.show()
 
     return influence_map, height_map
-
 
 
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
@@ -486,6 +520,8 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         trunk_location = get_trunk_location(pc)
         trunk_locations[name] = trunk_location
 
+        get_trunk_convex_hull(pc)
+
         # ugly code but for some reason o3d errors when appending to empty pointcloud
         if merged_plot is None:
             # copy constructor
@@ -493,6 +529,8 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         else:
             merged_plot += pc
         continue
+    
+    return
 
     # add noisy terrain
     # TODO: mesh of terrain for collision detection
