@@ -136,8 +136,6 @@ def assemble_trees_line(trees, n_trees=9):
         else:
             tri_mesh_plot, translation = place_tree_in_line(name, tri_mesh, tri_mesh_plot, collision_manager, trees)
             o3d_transform += translation
-
-        # TODO: save transform here and apply later to pointclouds to get final tile pointcloud
     
     return tri_mesh_plot
 
@@ -346,15 +344,13 @@ def get_trunk_convex_hull(pointcloud, slice_height=0.5):
     # crop pointcloud to bottom bbox
     cropped_pointcloud = pointcloud.crop(aaligned_bbox)
 
-    cropped_bbox = cropped_pointcloud.get_axis_aligned_bounding_box()
-
     points_3d = np.asarray(cropped_pointcloud.points)
     points_projected_2d = points_3d[:,:2]
 
     hull = ConvexHull(points_projected_2d)
     
     hull_points_3d = points_3d[hull.vertices]
-    return hull_points_3d
+    return hull_points_3d, hull
 
 
 def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
@@ -419,16 +415,19 @@ def add_terrain(plot_cloud, trunk_hulls):
     z_arr = final_xy_map.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
 
+    points_3d = remove_points_inside_hulls(points_3d, trunk_hulls)
+
     # visualization
-    plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
-    plt.colorbar()
-    plt.show()
+    # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
+    # plt.colorbar()
+    # plt.show()
 
     # to pointcloud
     vector_3d = o3d.utility.Vector3dVector(points_3d)
     terrain_cloud = o3d.geometry.PointCloud(vector_3d)
 
     return terrain_cloud
+
 
 def influence_function(index, total_points):
     x = index/total_points
@@ -437,8 +436,7 @@ def influence_function(index, total_points):
     # TODO: use exponential? will never get 0 so no div by 0 errors eg e^-4*x is practically equivalent to above
 
 def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_locations):
-    # TODO: account for multiple trunks close to each other, now just set to height of last tree
-    # probably just skip as hull function should replace this one anyway
+    # NOTE: don't use this, use convex hull function instead
 
     # create trunk_locations map
     influence_map = np.zeros((ny, nx), dtype= float)
@@ -491,14 +489,10 @@ def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, tr
     total_past_influence_map = np.zeros((ny, nx), dtype=float)
 
     for tree in trunk_hulls:
-        hull = trunk_hulls[tree]
+        hull_3d, _ = trunk_hulls[tree]
 
-        # TODO: if points inside hull: set their influence to 1 and height to -np.inf to easily detect (or None? )
-
-        # TODO: plan: for each point in hull: set influence for each point around it
-        # if influence already set, average current height with set height, weighted with set and current influence + set influence to max of influences
-
-        for point in hull:
+        # for each point in hull: calculate infuence + set surrounding height
+        for point in hull_3d:
             cur_height = point[2]
             
             closest_idx_x = int(np.round((point[0] - min_x ) * points_per_meter))
@@ -544,11 +538,46 @@ def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, tr
 
     
     # temp: visualize
-    plt.matshow(influence_map, cmap='gray')
-    plt.colorbar()
-    plt.show()
+    # plt.matshow(influence_map, cmap='gray')
+    # plt.colorbar()
+    # plt.show()
 
     return influence_map, height_map
+
+
+def point_in_hull(point, hull, tolerance=1e-12):
+    return all((np.dot(eq[:-1], point) + eq[-1] <= tolerance) for eq in hull.equations)
+
+def points_in_hull(p, hull, tol=1e-12):
+    return np.all(hull.equations[:,:-1] @ p.T + np.repeat(hull.equations[:,-1][None,:], len(p), axis=0).T <= tol, 0)
+
+def remove_points_inside_hulls(points, hulls):
+    for tree in hulls:
+        _, hull_object = hulls[tree]
+
+        max_bounds = np.amax(hull_object.points, axis=0)
+        min_bounds = np.amin(hull_object.points, axis=0)
+
+        # mask to select points within axis aligned bbox of convex hull, test these points
+        bbox_mask = np.all((points[:,0:2] >= min_bounds), axis=1) & np.all((points[:,0:2] <= max_bounds), axis=1)
+        
+        points_in_bbox = points[bbox_mask]
+        indices_in_bbox = bbox_mask.nonzero()[0]
+
+        # in hull mask is true at indices we want to delete
+        in_hull_mask = np.zeros(len(indices_in_bbox), dtype = bool)
+        # TODO: change this to function to do all points at once
+        for i, point in enumerate(points_in_bbox):
+            if point_in_hull(point[:2], hull_object):
+                in_hull_mask[i] = True
+        indices_to_delete = indices_in_bbox[in_hull_mask]
+
+        # deletion_mask is False at indices we want to delete
+        deletion_mask = np.ones(len(points), dtype=bool)
+        deletion_mask[indices_to_delete] = False
+        points = points[deletion_mask]
+
+    return points
 
 
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
@@ -569,8 +598,8 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         # transform_tensor = o3d.core.Tensor(transform)
         pc = pc.transform(transform)
 
-        trunk_hull = get_trunk_convex_hull(pc)
-        trunk_hulls[name] = trunk_hull
+        hull_3d_points, hull_obj = get_trunk_convex_hull(pc)
+        trunk_hulls[name] = hull_3d_points, hull_obj
 
         # ugly code but for some reason o3d errors when appending to empty pointcloud
         if merged_plot is None:
