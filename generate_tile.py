@@ -565,11 +565,7 @@ def remove_points_inside_hulls(points, hulls):
         indices_in_bbox = bbox_mask.nonzero()[0]
 
         # in hull mask is true at indices we want to delete
-        in_hull_mask = np.zeros(len(indices_in_bbox), dtype = bool)
-        # TODO: change this to function to do all points at once
-        for i, point in enumerate(points_in_bbox):
-            if point_in_hull(point[:2], hull_object):
-                in_hull_mask[i] = True
+        in_hull_mask = points_in_hull(points_in_bbox[:,:2], hull_object)
         indices_to_delete = indices_in_bbox[in_hull_mask]
 
         # deletion_mask is False at indices we want to delete
