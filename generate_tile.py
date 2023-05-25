@@ -8,8 +8,8 @@ import numpy as np
 import open3d as o3d
 import trimesh
 import matplotlib.pyplot as plt
-from scipy.spatial import ConvexHull
-from perlin_numpy import generate_fractal_noise_2d, generate_perlin_noise_2d
+from scipy.spatial import ConvexHull, Delaunay
+from perlin_numpy import generate_fractal_noise_2d
 
 def read_trees(mesh_dir, pc_dir, alpha=None):
     trees = {}
@@ -398,7 +398,7 @@ def add_terrain(plot_cloud, trunk_hulls):
 
     perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
     perlin_noise = perlin_noise[:ny, :nx]
-    SCALE = 1.5
+    SCALE = 2
     perlin_noise = perlin_noise * SCALE
 
     # get influence map and height map of trunks to adapt terrain to trunk heights and locations
@@ -432,8 +432,9 @@ def add_terrain(plot_cloud, trunk_hulls):
 def influence_function(index, total_points):
     x = index/total_points
     # return 1/(1 + (x/(1-x))**2)  # reverse S shape, seems to give too much of "pedestal" kind of form
-    return -(x-1)**3 # simple exponential-like curve 
-    # TODO: use exponential? will never get 0 so no div by 0 errors eg e^-4*x is practically equivalent to above
+    # return -(x-1)**3 # simple exponential-like curve 
+    # NOTE: use exponential? will never get 0 so no div by 0 errors eg e^-4*x is practically equivalent to above
+    return (x-1)**2
 
 def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_locations):
     # NOTE: don't use this, use convex hull function instead
@@ -480,8 +481,9 @@ def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_loc
     return influence_map, height_map
 
 def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, trunk_hulls):
-    # create trunk_locations map
+    # TODO: try to make influence map circular around points instead of square: just use distance? 
 
+    # create trunk influence and height map
     influence_map = np.zeros((ny, nx), dtype= float)
     height_map = np.zeros((ny, nx), dtype=float)
 
@@ -501,10 +503,10 @@ def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, tr
             # height = weighted average between old height and current height, based on influence
             height_map[closest_idx_y, closest_idx_x] = (total_past_influence_map[closest_idx_y, closest_idx_x]*height_map[closest_idx_y, closest_idx_x] + 1.0*cur_height) / (total_past_influence_map[closest_idx_y, closest_idx_x] + 1.0)
             influence_map[closest_idx_y, closest_idx_x] = 1.0
-            total_past_influence_map[closest_idx_y, closest_idx_y] += 1
+            total_past_influence_map[closest_idx_y, closest_idx_x] += 1
 
             # set influence around trunk centers in square form
-            TOTAL_POINTS = 70
+            TOTAL_POINTS = 20
             for idx_offset in range(1, TOTAL_POINTS):
                 cur_influence = influence_function(idx_offset, TOTAL_POINTS)
 
@@ -545,9 +547,6 @@ def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, tr
     return influence_map, height_map
 
 
-def point_in_hull(point, hull, tolerance=1e-12):
-    return all((np.dot(eq[:-1], point) + eq[-1] <= tolerance) for eq in hull.equations)
-
 def points_in_hull(p, hull, tol=1e-12):
     return np.all(hull.equations[:,:-1] @ p.T + np.repeat(hull.equations[:,-1][None,:], len(p), axis=0).T <= tol, 0)
 
@@ -574,6 +573,23 @@ def remove_points_inside_hulls(points, hulls):
         points = points[deletion_mask]
 
     return points
+
+
+def terrain2mesh(terrain_cloud):
+    # o3d triangulation does not work properly for this type of terrain mesh
+    # terrain_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(terrain_cloud, alpha=1)
+
+    tri = Delaunay(np.asarray(terrain_cloud.points)[:,:2])
+
+    print(tri.points.shape)
+    print(tri.simplices.shape)
+
+    terrain_mesh = o3d.geometry.TriangleMesh(vertices=o3d.utility.Vector3dVector(terrain_cloud.points), triangles=o3d.utility.Vector3iVector(tri.simplices))
+
+    o3d.visualization.draw_geometries([terrain_mesh])
+    return terrain_mesh
+
+
 
 
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
@@ -607,9 +623,11 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
 
     # add noisy terrain
-    # TODO: mesh of terrain for collision detection
     terrain_cloud = add_terrain(merged_plot, trunk_hulls)
     # merged_plot += terrain_cloud
+
+    # get mesh of terrain
+    terrain_mesh = terrain2mesh(terrain_cloud)
 
     
     # temp for debug
