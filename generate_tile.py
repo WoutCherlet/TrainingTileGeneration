@@ -625,6 +625,26 @@ def remove_points_inside_hulls(points, hulls):
     return points
 
 
+# TODO: add understory
+# plan: 
+# 1. select at random from library of cut out plants
+# 2. select random location, get height from terrain map (location at least 1m away from trunk locations)
+# 3. get bbox of plant, check if collision with any trees
+# 4. transform pc of plant until no more collision
+
+# TODO: woody debris
+# plan: 2 options
+# 1. select at random from woody debris library
+# 2. do similar to plants, add afterwards
+# OR add in somewhere in tree placement stage, will make it likely closer to trees and better placed but complicates terrain generation etc.
+
+# TODO: labeling of ply: probs need to convert everything to Tensor version of o3d
+
+# TODO: postprocessing:
+# downsampling
+# transform everything to fit in unit cube? have seen this done in some ML papers. could also save both and compare
+
+
 def terrain2mesh(terrain_cloud, decimation_factor = 5):
     # o3d triangulation does not work properly for this type of terrain mesh
     # terrain_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(terrain_cloud, alpha=1)
@@ -694,7 +714,7 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
     o3d.visualization.draw_geometries([merged_plot, terrain_cloud])
 
-    # TODO: write tiles here?
+    # TODO: write tiles here? manual check?
 
 
 def main():
