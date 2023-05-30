@@ -398,11 +398,11 @@ def add_terrain(plot_cloud, trunk_hulls):
 
     perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
     perlin_noise = perlin_noise[:ny, :nx]
-    SCALE = 2
+    SCALE = 3
     perlin_noise = perlin_noise * SCALE
 
     # get influence map and height map of trunks to adapt terrain to trunk heights and locations
-    influence_map, height_map = trunk_height_influence_map_convex(min_x, min_y, ny, nx, POINTS_PER_METER, trunk_hulls=trunk_hulls)
+    influence_map, height_map = trunk_height_influence_map_convex_circle(min_x, min_y, ny, nx, POINTS_PER_METER, trunk_hulls=trunk_hulls)
     final_xy_map = influence_map * height_map + (np.ones(influence_map.shape, dtype=float) - influence_map) * perlin_noise
 
     # get xy grid
@@ -434,6 +434,12 @@ def influence_function(index, total_points):
     # return 1/(1 + (x/(1-x))**2)  # reverse S shape, seems to give too much of "pedestal" kind of form
     # return -(x-1)**3 # simple exponential-like curve 
     # NOTE: use exponential? will never get 0 so no div by 0 errors eg e^-4*x is practically equivalent to above
+    return (x-1)**2
+
+def influence_function_dist(distance, max_distance):
+    if distance >= max_distance:
+        return 0
+    x = distance/max_distance
     return (x-1)**2
 
 def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_locations):
@@ -481,8 +487,6 @@ def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_loc
     return influence_map, height_map
 
 def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, trunk_hulls):
-    # TODO: try to make influence map circular around points instead of square: just use distance? 
-
     # create trunk influence and height map
     influence_map = np.zeros((ny, nx), dtype= float)
     height_map = np.zeros((ny, nx), dtype=float)
@@ -546,6 +550,52 @@ def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, tr
 
     return influence_map, height_map
 
+def trunk_height_influence_map_convex_circle(min_x, min_y, ny, nx, points_per_meter, trunk_hulls):
+    # create trunk influence and height map
+    influence_map = np.zeros((ny, nx), dtype= float)
+    height_map = np.zeros((ny, nx), dtype=float)
+
+    # used to keep track of influence of seen points on each points height, to do order independent weighted average
+    total_past_influence_map = np.zeros((ny, nx), dtype=float)
+
+    for tree in trunk_hulls:
+        hull_3d, _ = trunk_hulls[tree]
+
+        # for each point in hull: calculate infuence + set surrounding height
+        for point in hull_3d:
+            cur_height = point[2]
+            
+            closest_idx_x = int(np.round((point[0] - min_x ) * points_per_meter))
+            closest_idx_y = int(np.round((point[1] - min_y ) * points_per_meter))
+            centre_arr = np.array([closest_idx_x, closest_idx_y])
+
+            # set influence around trunk centers in circle form
+            INFLUENCE_RADIUS = 2 # radius in meters
+            index_offset = INFLUENCE_RADIUS*points_per_meter
+            for x in range(max(0, closest_idx_x - index_offset), min(closest_idx_x + index_offset, nx)):
+                for y in range(max(0, closest_idx_y - index_offset), min(closest_idx_y + index_offset, ny)):
+                    # get distance of x_indx, y_indx to closest_indx, closest_indxy
+                    index_distance = np.linalg.norm(np.array([x, y]) - centre_arr)
+                    actual_distance = index_distance/points_per_meter
+                    
+                    influence_factor = influence_function_dist(actual_distance, INFLUENCE_RADIUS)
+                    if influence_factor == 0:
+                        continue
+                    
+                    # height = weighted average between old height and current height, based on influence1
+                    height_map[y, x] = (total_past_influence_map[y, x]*height_map[y, x] + influence_factor*cur_height) / (total_past_influence_map[y, x] + influence_factor)
+                    # influence = max of possible influences
+                    influence_map[y, x] = max(influence_factor, influence_map[y, x])
+                    total_past_influence_map[y, x] += influence_factor
+    
+    # temp: visualize
+    plt.matshow(influence_map, cmap='gray')
+    plt.colorbar()
+    plt.show()
+
+    return influence_map, height_map
+
+
 
 def points_in_hull(p, hull, tol=1e-12):
     return np.all(hull.equations[:,:-1] @ p.T + np.repeat(hull.equations[:,-1][None,:], len(p), axis=0).T <= tol, 0)
@@ -575,19 +625,25 @@ def remove_points_inside_hulls(points, hulls):
     return points
 
 
-def terrain2mesh(terrain_cloud):
+def terrain2mesh(terrain_cloud, decimation_factor = 5):
     # o3d triangulation does not work properly for this type of terrain mesh
     # terrain_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(terrain_cloud, alpha=1)
 
     tri = Delaunay(np.asarray(terrain_cloud.points)[:,:2])
 
-    print(tri.points.shape)
-    print(tri.simplices.shape)
-
     terrain_mesh = o3d.geometry.TriangleMesh(vertices=o3d.utility.Vector3dVector(terrain_cloud.points), triangles=o3d.utility.Vector3iVector(tri.simplices))
 
-    o3d.visualization.draw_geometries([terrain_mesh])
-    return terrain_mesh
+    # perform decimation
+    n_triangles = len(terrain_mesh.triangles)
+    decimated_mesh = terrain_mesh.simplify_quadric_decimation(target_number_of_triangles=int(n_triangles//decimation_factor))
+
+    # visualization for debug
+    # terrain_mesh.translate([40,0,0])
+    # decimated_mesh.translate([80,0,0])
+    # o3d.visualization.draw_geometries([terrain_cloud, terrain_mesh, decimated_mesh])
+
+    return decimated_mesh
+
 
 
 
