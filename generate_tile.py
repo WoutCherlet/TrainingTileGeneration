@@ -356,7 +356,7 @@ def get_trunk_location(pointcloud):
     # Temporary: get convex hull center
     return [center_x, center_y, min_bound_bbox[2]]
 
-def get_trunk_convex_hull(pointcloud, slice_height=0.5):  
+def get_trunk_convex_hull(pointcloud, slice_height=0.75):  
     # get axis aligned bounding box
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
 
@@ -377,7 +377,7 @@ def get_trunk_convex_hull(pointcloud, slice_height=0.5):
     hull_points_3d = points_3d[hull.vertices]
     return hull_points_3d, hull
 
-def get_trunk_alpha_shape(pointcloud, slice_height=0.5):
+def get_trunk_alpha_shape(pointcloud, slice_height=0.75):
     # get axis aligned bounding box
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
 
@@ -399,18 +399,19 @@ def get_trunk_alpha_shape(pointcloud, slice_height=0.5):
     # check if alphashape area is not inside tree by checking that area is large enough + check if not split up
     # if so, decrease alpha
     bbox_area = np.prod(np.amax(points_projected_2d, axis=0) - np.amin(points_projected_2d, axis=0))
-    while isinstance(alpha_shape, shapely.MultiPolygon) or alpha_shape.area < 0.3*bbox_area:
+    while isinstance(alpha_shape, shapely.MultiPolygon) or alpha_shape.area < 0.5*bbox_area:
         ALPHA -= 1
         alpha_shape = alphashape.alphashape(points_projected_2d, ALPHA)
 
     # temp: plot alpha shape
-    fig, ax = plt.subplots()
-    ax.scatter(*zip(*points_projected_2d))
-    x,y = alpha_shape.exterior.xy
-    plt.plot(x,y)
-    plt.show()
+    # fig, ax = plt.subplots()
+    # ax.scatter(*zip(*points_projected_2d))
+    # x,y = alpha_shape.exterior.xy
+    # plt.plot(x,y)
+    # plt.show()
 
     return alpha_shape
+
 
 def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
@@ -435,7 +436,7 @@ def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
     return terrain_cloud
 
-def add_terrain(plot_cloud, trunk_hulls):
+def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     # get dimension of plot cloud
     max_x, max_y, _ = plot_cloud.get_max_bound()
     min_x, min_y, _ = plot_cloud.get_min_bound()
@@ -474,7 +475,7 @@ def add_terrain(plot_cloud, trunk_hulls):
     z_arr = final_xy_map.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
 
-    points_3d = remove_points_inside_hulls(points_3d, trunk_hulls)
+    points_3d_cleaned = remove_points_inside_alpha_shape(points_3d, alphashapes)
 
     # visualization
     # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
@@ -482,7 +483,7 @@ def add_terrain(plot_cloud, trunk_hulls):
     # plt.show()
 
     # to pointcloud
-    vector_3d = o3d.utility.Vector3dVector(points_3d)
+    vector_3d = o3d.utility.Vector3dVector(points_3d_cleaned)
     terrain_cloud = o3d.geometry.PointCloud(vector_3d)
 
     return terrain_cloud
@@ -675,7 +676,6 @@ def remove_points_inside_hulls(points, hulls):
         # in hull mask is true at indices we want to delete
         in_hull_mask = points_in_hull(points_in_bbox[:,:2], hull_object)
         indices_to_delete = indices_in_bbox[in_hull_mask]
-
         # deletion_mask is False at indices we want to delete
         deletion_mask = np.ones(len(points), dtype=bool)
         deletion_mask[indices_to_delete] = False
@@ -683,6 +683,35 @@ def remove_points_inside_hulls(points, hulls):
 
     return points
 
+def points_in_alphashape(points, alphashape):
+    mask = []
+    for point in points:
+        mask.append(alphashape.contains(shapely.Point(point)))
+    return np.array(mask)
+
+def remove_points_inside_alpha_shape(points, alphashapes):
+    for tree in alphashapes:
+        polygon = alphashapes[tree]
+
+        min_bounds = polygon.bounds[:2]
+        max_bounds = polygon.bounds[2:4]
+
+        # mask to select points within axis aligned bbox of convex hull, test these points
+        bbox_mask = np.all((points[:,0:2] >= min_bounds), axis=1) & np.all((points[:,0:2] <= max_bounds), axis=1)
+        
+        points_in_bbox = points[bbox_mask]
+        indices_in_bbox = bbox_mask.nonzero()[0]
+
+        # in hull mask is true at indices we want to delete
+        in_hull_mask = points_in_alphashape(points_in_bbox[:,:2], polygon)
+        indices_to_delete = indices_in_bbox[in_hull_mask]
+
+        # deletion_mask is False at indices we want to delete
+        deletion_mask = np.ones(len(points), dtype=bool)
+        deletion_mask[indices_to_delete] = False
+        points = points[deletion_mask]
+
+    return points
 
 # TODO: add understory
 # plan: 
@@ -736,6 +765,7 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     # apply derived transforms to pointcloud and get trunk locations
     merged_plot = None
     trunk_hulls = {}
+    alphashapes = {}
     for name in transforms:
         # apply transforms to open3d and merge
 
@@ -744,9 +774,8 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         # transform_tensor = o3d.core.Tensor(transform)
         pc = pc.transform(transform)
 
-        hull_3d_points, hull_obj = get_trunk_convex_hull(pc)
-        alpha_shape = get_trunk_alpha_shape(pc)
-        trunk_hulls[name] = hull_3d_points, hull_obj
+        trunk_hulls[name] = get_trunk_convex_hull(pc)
+        alphashapes[name] = get_trunk_alpha_shape(pc)
 
         # ugly code but for some reason o3d errors when appending to empty pointcloud
         if merged_plot is None:
@@ -758,7 +787,7 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
 
     # add noisy terrain
-    terrain_cloud = add_terrain(merged_plot, trunk_hulls)
+    terrain_cloud = add_terrain(merged_plot, trunk_hulls, alphashapes)
     # merged_plot += terrain_cloud
 
     # get mesh of terrain
