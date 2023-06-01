@@ -7,11 +7,13 @@ import math as m
 import numpy as np
 import open3d as o3d
 import trimesh
+import alphashape
+import shapely
 import matplotlib.pyplot as plt
+import seaborn as sns
 from scipy.spatial import ConvexHull, Delaunay
 from perlin_numpy import generate_fractal_noise_2d
 
-import seaborn as sns
 
 def read_trees(mesh_dir, pc_dir, alpha=None):
     trees = {}
@@ -169,7 +171,7 @@ def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manage
     initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, z_target-min_z_tree])
     bbox_transform = trimesh.transformations.translation_matrix(initial_translation)
 
-    print(f"Placing {name} at height {z_target}")
+    # print(f"Placing {name} at height {z_target}")
 
     tree_mesh.apply_transform(bbox_transform)
     total_translation += initial_translation
@@ -375,6 +377,40 @@ def get_trunk_convex_hull(pointcloud, slice_height=0.5):
     hull_points_3d = points_3d[hull.vertices]
     return hull_points_3d, hull
 
+def get_trunk_alpha_shape(pointcloud, slice_height=0.5):
+    # get axis aligned bounding box
+    aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
+
+    # slice bottom part of bounding box
+    min_bound_bbox = aaligned_bbox.get_min_bound()
+    max_bound_bbox = aaligned_bbox.get_max_bound()
+    max_bound_bbox[2] = min_bound_bbox[2] + slice_height
+    aaligned_bbox.max_bound = max_bound_bbox
+
+    # crop pointcloud to bottom bbox
+    cropped_pointcloud = pointcloud.crop(aaligned_bbox)
+
+    points_3d = np.asarray(cropped_pointcloud.points)
+    points_projected_2d = points_3d[:,:2]
+
+    ALPHA = 10.0
+    alpha_shape = alphashape.alphashape(points_projected_2d, ALPHA)
+
+    # check if alphashape area is not inside tree by checking that area is large enough + check if not split up
+    # if so, decrease alpha
+    bbox_area = np.prod(np.amax(points_projected_2d, axis=0) - np.amin(points_projected_2d, axis=0))
+    while isinstance(alpha_shape, shapely.MultiPolygon) or alpha_shape.area < 0.3*bbox_area:
+        ALPHA -= 1
+        alpha_shape = alphashape.alphashape(points_projected_2d, ALPHA)
+
+    # temp: plot alpha shape
+    fig, ax = plt.subplots()
+    ax.scatter(*zip(*points_projected_2d))
+    x,y = alpha_shape.exterior.xy
+    plt.plot(x,y)
+    plt.show()
+
+    return alpha_shape
 
 def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
@@ -709,6 +745,7 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         pc = pc.transform(transform)
 
         hull_3d_points, hull_obj = get_trunk_convex_hull(pc)
+        alpha_shape = get_trunk_alpha_shape(pc)
         trunk_hulls[name] = hull_3d_points, hull_obj
 
         # ugly code but for some reason o3d errors when appending to empty pointcloud
