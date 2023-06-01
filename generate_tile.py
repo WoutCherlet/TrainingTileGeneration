@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from scipy.spatial import ConvexHull, Delaunay
 from perlin_numpy import generate_fractal_noise_2d
 
+import seaborn as sns
+
 def read_trees(mesh_dir, pc_dir, alpha=None):
     trees = {}
     for file in sorted(glob.glob(os.path.join(pc_dir, "*.ply"))):
@@ -32,6 +34,22 @@ def read_trees(mesh_dir, pc_dir, alpha=None):
         tri_mesh = trimesh.load(mesh_file)
         trees[name] = (pc, o3d_mesh, tri_mesh)
     return trees
+
+
+def test_height_gen():
+    x_vals = []
+    for _ in range(100000):
+        x_vals.append(generate_random_tree_height())
+    
+    sns.displot(x_vals)
+    plt.show()
+
+def generate_random_tree_height(alpha=2, beta=2):
+    Z_MAX = 1 # max tree height deviation from 0
+
+    beta_sample =  np.random.beta(a=5,b=5) # beta distribution looks kind off like a normal distribution but with values bounded in [0,1]
+    z_target = (2*beta_sample - 1)*Z_MAX # recentre around zero and scale with Z_MAX
+    return z_target
 
 
 def place_tree_in_line(name, tree_mesh, plot_mesh, collision_manager, trees):
@@ -139,15 +157,19 @@ def assemble_trees_line(trees, n_trees=9):
     
     return tri_mesh_plot
 
-
 def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, max_y_plot, debug=False):
     # start by placing tree at edge of plot
     total_translation = np.array([0.0,0.0,0.0])
 
     min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
 
-    initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, -min_z_tree])
+    # maximal absolute height value
+    z_target = generate_random_tree_height()
+
+    initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, z_target-min_z_tree])
     bbox_transform = trimesh.transformations.translation_matrix(initial_translation)
+
+    print(f"Placing {name} at height {z_target}")
 
     tree_mesh.apply_transform(bbox_transform)
     total_translation += initial_translation
@@ -268,7 +290,8 @@ def assemble_trees_grid(trees, n_trees=9, debug=False):
             # start plot at 0,0,0
             print(f"Placing tree {name}")
             min_x_mesh, min_y_mesh, min_z_mesh = tri_mesh.bounds[0]
-            origin_translation = trimesh.transformations.translation_matrix(np.array([-min_x_mesh, -min_y_mesh, -min_z_mesh]))
+            z_target = generate_random_tree_height()
+            origin_translation = trimesh.transformations.translation_matrix(np.array([-min_x_mesh, -min_y_mesh, z_target-min_z_mesh]))
             tri_mesh.apply_transform(origin_translation)
             tri_mesh_plot = tri_mesh
             if debug:
@@ -589,9 +612,9 @@ def trunk_height_influence_map_convex_circle(min_x, min_y, ny, nx, points_per_me
                     total_past_influence_map[y, x] += influence_factor
     
     # temp: visualize
-    plt.matshow(influence_map, cmap='gray')
-    plt.colorbar()
-    plt.show()
+    # plt.matshow(influence_map, cmap='gray')
+    # plt.colorbar()
+    # plt.show()
 
     return influence_map, height_map
 
@@ -666,9 +689,8 @@ def terrain2mesh(terrain_cloud, decimation_factor = 5):
 
 
 
-
-
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
+
     trees = read_trees(mesh_dir, pc_dir, alpha=alpha)
 
     print(f"Read {len(trees)} trees")
