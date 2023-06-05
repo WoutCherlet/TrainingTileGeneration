@@ -88,7 +88,28 @@ def isin_nd(a,b):
     A,B = view1D(a.reshape(a.shape[0],-1),b.reshape(b.shape[0],-1))
     return np.isin(A,B)
 
+def isin_tolerance(A, B, tol):
+    A = np.asarray(A)
+    B = np.asarray(B)
 
+    Bs = np.sort(B) # skip if already sorted
+    idx = np.searchsorted(Bs, A)
+
+    linvalid_mask = idx==len(B)
+    idx[linvalid_mask] = len(B)-1
+    lval = Bs[idx] - A
+    lval[linvalid_mask] *=-1
+
+    rinvalid_mask = idx==0
+    idx1 = idx-1
+    idx1[rinvalid_mask] = 0
+    rval = A - Bs[idx1]
+    rval[rinvalid_mask] *=-1
+    return np.minimum(lval, rval) <= tol
+
+def isclose_nd(a,b):
+    A,B = view1D(a.reshape(a.shape[0],-1),b.reshape(b.shape[0],-1))
+    return isin_tolerance(A,B, tol=0.01)
 
 def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
     tilenames = [os.path.join(clipped_tiles_dir, f) for f in os.listdir(clipped_tiles_dir) if f[-3:] == 'ply']
@@ -101,7 +122,7 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
     tree_number2file = {i: filename for i, filename in enumerate(filenames)}
 
     understory_tiles = []
-    out_understory = os.path.join(DATA_DIR, "understory_tiles")
+    out_understory = os.path.join(DATA_DIR, "understory_tiles_close")
     if not os.path.exists(out_understory):
         os.mkdir(out_understory)
 
@@ -132,7 +153,7 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
         # Iterate over all trees within tile
         for tree_in in trees_in:
             # Boolean list indicating where tile points occur as tree points
-            row_match = isin_nd(points, np.asarray(tree_in.points))
+            row_match = isclose_nd_slow(points, np.asarray(tree_in.points))
 
             # Allocate class and instance label
             tree_mask = np.logical_or(tree_mask, row_match)
@@ -146,6 +167,9 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
 
         # write tiles also
         o3d.io.write_point_cloud(os.path.join(out_understory, f"understory_{os.path.basename(tilename)}"), understory_cloud)
+        
+        # TODO: temp: test on one tile
+        return
 
     print("Merging understory tiles")
 
