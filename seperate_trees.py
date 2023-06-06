@@ -89,6 +89,7 @@ def isin_nd(a,b):
     return np.isin(A,B)
 
 def isin_tolerance(A, B, tol):
+    # TODO: problem with A and B being 2d arrays, need some way to do this using xyz elements
     A = np.asarray(A)
     B = np.asarray(B)
 
@@ -110,12 +111,9 @@ def isin_tolerance(A, B, tol):
     return np.minimum(lval, rval) <= tol # return a boolean array of A.shape where A is within tol distance of any element of B
 
 def isclose_nd(a,b):
-    TOL = 0.0001
-    # A and B must be 2D arrays with substractable elements, so we call this function for x,y,z seperate and then do logical_and
-    x_arr = isin_tolerance(a[:,0], b[:,0], tol=TOL)
-    y_arr = isin_tolerance(a[:,1], b[:,1], tol=TOL)
-    z_arr = isin_tolerance(a[:,2], b[:,2], tol=TOL)
-    return np.all((x_arr, y_arr, z_arr), axis=0)
+    a_rounded = np.around(a, decimals=1)
+    b_rounded = np.around(b, decimals=1)
+    return isin_nd(a_rounded,b_rounded)
 
 def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
     tilenames = [os.path.join(clipped_tiles_dir, f) for f in os.listdir(clipped_tiles_dir) if f[-3:] == 'ply']
@@ -142,7 +140,7 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
     for i in tqdm(range(len(tilenames))):
 
         # Read tile
-        tilename = tilenames[i+2]
+        tilename = tilenames[i]
         tile = o3d.io.read_point_cloud(tilename)
 
         # Get bounds of tile
@@ -156,8 +154,6 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
         bbox_in = bbox[((bbox['x_min'] < t_x_max) & (bbox['x_max'] > t_x_min) & (bbox['y_min'] < t_y_max) & (bbox['y_max'] > t_y_min))]
         trees_names_in = [tree_number2file[i] for i in bbox_in.index]
 
-        print(trees_names_in)
-        
         # Read in point clouds of included trees
         trees_in = read_clouds([os.path.join(pc_folder, tree_name) for tree_name in trees_names_in])
 
@@ -194,9 +190,6 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
 
         # write tiles also
         o3d.io.write_point_cloud(os.path.join(out_understory, f"understory_{os.path.basename(tilename)}"), understory_cloud)
-        
-        # TODO: temp: test on one tile
-        return
 
     print("Merging understory tiles")
 
@@ -206,6 +199,8 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
             
 def post_process_pc():
     understoryply = os.path.join(DATA_DIR, "understory.ply")
+    # TODO: temp
+    understoryply = os.path.join(DATA_DIR, "understory_tiles_close", "understory_wytham_winter_102.ply")
 
     understory_cloud = o3d.io.read_point_cloud(understoryply)
 
@@ -213,18 +208,9 @@ def post_process_pc():
     cl, ind = understory_cloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
     display_inlier_outlier(understory_cloud, ind)
 
-    # same with radius outlier detection 
-
-    cl, ind = understory_cloud.remove_radius_outlier(nb_points=16, radius=0.05)
-    display_inlier_outlier(understory_cloud, ind)
-
 
 
 def main():
-    # TODO: plan:
-    # 2. Delete all tree points by checking segmeented trees
-    # extra: remove terrain using some sort of filter
-
     pc_folder = os.path.join(DATA_DIR, "trees")
     bbox_extent = os.path.join(DATA_DIR, "extent.csv")
     bbox_trees = os.path.join(DATA_DIR, "bounding_boxes.csv")
@@ -238,8 +224,9 @@ def main():
     # only run once!!
     # clip_tiles(bbox_extent, valid_tiles_path, clipped_tiles_dir)
 
-    get_understory(pc_folder, clipped_tiles_dir, bbox_trees)
+    # get_understory(pc_folder, clipped_tiles_dir, bbox_trees)
 
+    post_process_pc()
     return
 
 
