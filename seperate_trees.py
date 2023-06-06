@@ -94,22 +94,28 @@ def isin_tolerance(A, B, tol):
 
     Bs = np.sort(B) # skip if already sorted
     idx = np.searchsorted(Bs, A)
+    # searchsorted returns for each element in A the index where element should be inserted to maintain order
+    # aka idx[i] satisfies Bs[idx[i] - 1] < A[i] < Bs[idx[i]]
 
-    linvalid_mask = idx==len(B)
-    idx[linvalid_mask] = len(B)-1
-    lval = Bs[idx] - A
-    lval[linvalid_mask] *=-1
+    linvalid_mask = idx==len(B) # if idx is len(B), the element of A is bigger then all elements in B, but we still want to check if we are close to the last element of B
+    idx[linvalid_mask] = len(B)-1 # if we are at the end of the list, check the last element of B
+    lval = Bs[idx] - A # get the difference between the closest element of B on the right (bigger) and corresponding element of A
+    lval[linvalid_mask] *=-1 # where we were at the end of the array, A was larger then B so switch sign
 
-    rinvalid_mask = idx==0
-    idx1 = idx-1
-    idx1[rinvalid_mask] = 0
-    rval = A - Bs[idx1]
-    rval[rinvalid_mask] *=-1
-    return np.minimum(lval, rval) <= tol
+    rinvalid_mask = idx==0 # if idx is 0, the element of A is smaller then all elements of B, but we still want to check if we are close to the first element of B
+    idx1 = idx-1 # substract 1 of index, to get the left closest element
+    idx1[rinvalid_mask] = 0 # if idx is 0, add one back to get leftmost element of B
+    rval = A - Bs[idx1] # get the difference between closest element of B on the left (smaller) and corresponding element of A
+    rval[rinvalid_mask] *=-1 # where we were at start of array, A was smaller then B so switch sign
+    return np.minimum(lval, rval) <= tol # return a boolean array of A.shape where A is within tol distance of any element of B
 
 def isclose_nd(a,b):
-    A,B = view1D(a.reshape(a.shape[0],-1),b.reshape(b.shape[0],-1))
-    return isin_tolerance(A,B, tol=0.01)
+    TOL = 0.0001
+    # A and B must be 2D arrays with substractable elements, so we call this function for x,y,z seperate and then do logical_and
+    x_arr = isin_tolerance(a[:,0], b[:,0], tol=TOL)
+    y_arr = isin_tolerance(a[:,1], b[:,1], tol=TOL)
+    z_arr = isin_tolerance(a[:,2], b[:,2], tol=TOL)
+    return np.all((x_arr, y_arr, z_arr), axis=0)
 
 def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
     tilenames = [os.path.join(clipped_tiles_dir, f) for f in os.listdir(clipped_tiles_dir) if f[-3:] == 'ply']
@@ -125,12 +131,18 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
     out_understory = os.path.join(DATA_DIR, "understory_tiles_close")
     if not os.path.exists(out_understory):
         os.mkdir(out_understory)
+    out_trees = os.path.join(DATA_DIR, "trees_tiles_close")
+    if not os.path.exists(out_trees):
+        os.mkdir(out_trees)
+    out_trees_exact = os.path.join(DATA_DIR, "trees_tiles")
+    if not os.path.exists(out_trees_exact):
+        os.mkdir(out_trees_exact)
 
     # Iterate over all tiles
     for i in tqdm(range(len(tilenames))):
 
         # Read tile
-        tilename = tilenames[i]
+        tilename = tilenames[i+2]
         tile = o3d.io.read_point_cloud(tilename)
 
         # Get bounds of tile
@@ -143,20 +155,25 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
         # Get trees that fall (partly) within bounds of the tile
         bbox_in = bbox[((bbox['x_min'] < t_x_max) & (bbox['x_max'] > t_x_min) & (bbox['y_min'] < t_y_max) & (bbox['y_max'] > t_y_min))]
         trees_names_in = [tree_number2file[i] for i in bbox_in.index]
+
+        print(trees_names_in)
         
         # Read in point clouds of included trees
         trees_in = read_clouds([os.path.join(pc_folder, tree_name) for tree_name in trees_names_in])
 
-        # Pre-allocate label array with value '-1'
         tree_mask = np.zeros(len(points), dtype=np.int32)
+        tree_mask_exact = np.zeros(len(points), dtype=np.int32)
 
         # Iterate over all trees within tile
         for tree_in in trees_in:
             # Boolean list indicating where tile points occur as tree points
-            row_match = isclose_nd_slow(points, np.asarray(tree_in.points))
+            row_match = isclose_nd(points, np.asarray(tree_in.points))
 
-            # Allocate class and instance label
+            row_match_exact = isin_nd(points, np.asarray(tree_in.points))
+
+            # get total tree mask for total
             tree_mask = np.logical_or(tree_mask, row_match)
+            tree_mask_exact = np.logical_or(tree_mask_exact, row_match_exact)
 
         # get understory mask and slice points
         understory_mask = np.logical_not(tree_mask)
@@ -164,6 +181,16 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
         understory_cloud = o3d.geometry.PointCloud()
         understory_cloud.points = o3d.utility.Vector3dVector(understory_points)
         understory_tiles.append(understory_cloud)
+
+        tree_points = points[tree_mask]
+        tree_cloud = o3d.geometry.PointCloud()
+        tree_cloud.points = o3d.utility.Vector3dVector(tree_points)
+        o3d.io.write_point_cloud(os.path.join(out_trees, f"trees_{os.path.basename(tilename)}"), tree_cloud)
+
+        tree_points_exact = points[tree_mask_exact]
+        tree_cloud_exact = o3d.geometry.PointCloud()
+        tree_cloud_exact.points = o3d.utility.Vector3dVector(tree_points_exact)
+        o3d.io.write_point_cloud(os.path.join(out_trees_exact, f"trees_{os.path.basename(tilename)}"), tree_cloud_exact)
 
         # write tiles also
         o3d.io.write_point_cloud(os.path.join(out_understory, f"understory_{os.path.basename(tilename)}"), understory_cloud)
