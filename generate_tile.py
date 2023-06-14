@@ -18,9 +18,6 @@ from perlin_numpy import generate_fractal_noise_2d
 
 DEBUG = True
 
-# TODO: should this be global?
-CURRENT_INSTANCE_ID = 1
-
 SEMANTIC_MAP = {
     0: "terrain",
     1: "tree",
@@ -506,6 +503,9 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     z_arr = final_xy_map.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
 
+    
+    # TODO: add terrain squares in perlin noise here
+
     points_3d_cleaned = remove_points_inside_alpha_shape(points_3d, alphashapes)
 
     # visualization
@@ -513,10 +513,14 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     # plt.colorbar()
     # plt.show()
 
+
     # to pointcloud
     tensor_3d = o3d.core.Tensor(points_3d_cleaned)
     terrain_cloud = o3d.t.geometry.PointCloud()
     terrain_cloud.point.positions = tensor_3d
+    # add labels to terrain cloud: semantic terrain label is 0, no instance so -1
+    terrain_cloud.point.semantic = o3d.core.Tensor(np.zeros(len(points_3d_cleaned), dtype=int))
+    terrain_cloud.point.instance = o3d.core.Tensor(np.repeat(-1, len(points_3d_cleaned)))
 
     return terrain_cloud
 
@@ -781,7 +785,9 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
     print(f"Read {len(trees)} trees")
 
-    plot, transforms = assemble_trees_grid(trees, n_trees=4, debug=DEBUG)
+    N_TREES = 4
+
+    plot, transforms = assemble_trees_grid(trees, n_trees=N_TREES, debug=DEBUG)
     
     # apply derived transforms to pointcloud and get trunk locations
     merged_plot = None
@@ -790,6 +796,12 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
     trunk_hulls = {}
     alphashapes = {}
+
+    CURRENT_INSTANCE_ID = 1
+
+    cmap = plt.get_cmap("Set1")
+    n_colors = len(cmap.colors)
+
     for name in transforms:
         # apply transforms to open3d and merge
 
@@ -798,19 +810,25 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         # transform_tensor = o3d.core.Tensor(transform)
         pc = pc.transform(transform)
 
+        
+        # add labels to terrain cloud: semantic terrain label is 1, unique instance label per tree
+        pc.point.semantic = o3d.core.Tensor(np.zeros(len(pc.point.positions), dtype=int))
+        pc.point.instance = o3d.core.Tensor(np.repeat(CURRENT_INSTANCE_ID, len(pc.point.positions)))
+        CURRENT_INSTANCE_ID += 1
+
         trunk_hulls[name] = get_trunk_convex_hull(pc)
         alphashapes[name] = get_trunk_alpha_shape(pc)
 
         # ugly code but for some reason o3d errors when appending to empty pointcloud
         if merged_plot is None:
             if DEBUG:
-                merged_plot_debug = Tensor2VecPC(pc)
+                merged_plot_debug = Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(CURRENT_INSTANCE_ID-2) % n_colors])
             # copy constructor
             merged_plot = o3d.t.geometry.PointCloud(pc)
         else:
             merged_plot += pc
             if DEBUG:
-                merged_plot_debug += Tensor2VecPC(pc)
+                merged_plot_debug += Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(CURRENT_INSTANCE_ID-2) % n_colors])
         continue
 
 
@@ -820,6 +838,7 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
     if DEBUG:
         terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
+        terrain_cloud_debug.paint_uniform_color([0.75,0.75,0.75])
 
     # get mesh of terrain
     # terrain_mesh = terrain2mesh(terrain_cloud)
