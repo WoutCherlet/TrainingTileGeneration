@@ -1,0 +1,22 @@
+TODO: add understory
+plan: 
+- 1. select at random from library of cut out plants
+- 2. select random location, get height from terrain map (location at least 1m away from trunk locations)
+- 3. get bbox of plant, check if collision with any trees
+- 4. transform pc of plant until no more collision
+
+TODO: woody debris
+plan: 2 options
+1. select at random from woody debris library
+2. do similar to plants, add afterwards OR add in somewhere in tree placement stage, will make it likely closer to trees and better placed but complicates terrain generation etc.
+
+TODO: labeling of ply:
+1. refactor to tensor version of o3d : make sure arrays are c contiguous
+2. give each tree point cloud unique id
+3. create semantic mapping: 0 -> terrain, 1 -> trees, 2 -> lying woody debris, 3 -> standing woody debris, ..
+4. merge everything and save
+5. also create downsampled version
+
+TODO: postprocessing:
+- transform everything to fit in unit cube? have seen this done in some ML papers. could also save both and compare
+

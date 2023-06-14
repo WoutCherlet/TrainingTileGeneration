@@ -3,6 +3,7 @@ import os
 import glob
 import random
 import math as m
+import time
 
 import numpy as np
 import open3d as o3d
@@ -15,10 +16,28 @@ from scipy.spatial import ConvexHull, Delaunay
 from perlin_numpy import generate_fractal_noise_2d
 
 
+DEBUG = True
+
+# TODO: should this be global?
+CURRENT_INSTANCE_ID = 1
+
+SEMANTIC_MAP = {
+    0: "terrain",
+    1: "tree",
+    2: "lying woody debris",
+    3: "standing woody debris",
+    4: "understory",
+    5: "tripod" # Tom's suggestion
+}
+
+
 def read_trees(mesh_dir, pc_dir, alpha=None):
+    device = o3d.core.Device("CPU:0")
+    dtype = o3d.core.float32
+
     trees = {}
     for file in sorted(glob.glob(os.path.join(pc_dir, "*.ply"))):
-        pc = o3d.io.read_point_cloud(file)
+        pc = o3d.t.io.read_point_cloud(file)
         name = os.path.basename(file)[:-4]
         # find file with similar name in mesh_dir
         if isinstance(alpha, float):
@@ -32,10 +51,19 @@ def read_trees(mesh_dir, pc_dir, alpha=None):
         mesh_file = results[0]
         if len(results) > 1:
             print(f"Found multiple alpha complexes for tree {name}, using {mesh_file}")
-        o3d_mesh = o3d.io.read_triangle_mesh(mesh_file)
+        o3d_mesh = o3d.t.io.read_triangle_mesh(mesh_file)
         tri_mesh = trimesh.load(mesh_file)
         trees[name] = (pc, o3d_mesh, tri_mesh)
     return trees
+
+
+
+def Tensor2VecPC(pointcloud):
+    if not isinstance(pointcloud, o3d.t.geometry.PointCloud):
+        print(f"Not the right type of pointcloud: {pointcloud}")
+        return None
+    return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pointcloud.point.positions.numpy()))
+
 
 
 def test_height_gen():
@@ -52,6 +80,7 @@ def generate_random_tree_height(alpha=2, beta=2):
     beta_sample =  np.random.beta(a=5,b=5) # beta distribution looks kind off like a normal distribution but with values bounded in [0,1]
     z_target = (2*beta_sample - 1)*Z_MAX # recentre around zero and scale with Z_MAX
     return z_target
+
 
 
 def place_tree_in_line(name, tree_mesh, plot_mesh, collision_manager, trees):
@@ -337,6 +366,7 @@ def assemble_trees_grid(trees, n_trees=9, debug=False):
     return tri_mesh_plot, transforms
 
 
+
 def get_trunk_location(pointcloud):
     # get axis aligned bounding box
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
@@ -361,15 +391,15 @@ def get_trunk_convex_hull(pointcloud, slice_height=0.75):
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
 
     # slice bottom part of bounding box
-    min_bound_bbox = aaligned_bbox.get_min_bound()
-    max_bound_bbox = aaligned_bbox.get_max_bound()
+    min_bound_bbox = aaligned_bbox.min_bound
+    max_bound_bbox = aaligned_bbox.max_bound
     max_bound_bbox[2] = min_bound_bbox[2] + slice_height
-    aaligned_bbox.max_bound = max_bound_bbox
+    aaligned_bbox.set_max_bound(max_bound_bbox)
 
     # crop pointcloud to bottom bbox
     cropped_pointcloud = pointcloud.crop(aaligned_bbox)
 
-    points_3d = np.asarray(cropped_pointcloud.points)
+    points_3d = cropped_pointcloud.point.positions.numpy()
     points_projected_2d = points_3d[:,:2]
 
     hull = ConvexHull(points_projected_2d)
@@ -382,15 +412,15 @@ def get_trunk_alpha_shape(pointcloud, slice_height=0.75):
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
 
     # slice bottom part of bounding box
-    min_bound_bbox = aaligned_bbox.get_min_bound()
-    max_bound_bbox = aaligned_bbox.get_max_bound()
+    min_bound_bbox = aaligned_bbox.min_bound
+    max_bound_bbox = aaligned_bbox.max_bound
     max_bound_bbox[2] = min_bound_bbox[2] + slice_height
-    aaligned_bbox.max_bound = max_bound_bbox
+    aaligned_bbox.set_max_bound(max_bound_bbox)
 
     # crop pointcloud to bottom bbox
     cropped_pointcloud = pointcloud.crop(aaligned_bbox)
 
-    points_3d = np.asarray(cropped_pointcloud.points)
+    points_3d = cropped_pointcloud.point.positions.numpy()
     points_projected_2d = points_3d[:,:2]
 
     ALPHA = 10.0
@@ -411,6 +441,7 @@ def get_trunk_alpha_shape(pointcloud, slice_height=0.75):
     # plt.show()
 
     return alpha_shape
+
 
 
 def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
@@ -438,8 +469,8 @@ def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
 def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     # get dimension of plot cloud
-    max_x, max_y, _ = plot_cloud.get_max_bound()
-    min_x, min_y, _ = plot_cloud.get_min_bound()
+    max_x, max_y, _ = plot_cloud.get_max_bound().numpy()
+    min_x, min_y, _ = plot_cloud.get_min_bound().numpy()
 
     POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
 
@@ -483,10 +514,12 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     # plt.show()
 
     # to pointcloud
-    vector_3d = o3d.utility.Vector3dVector(points_3d_cleaned)
-    terrain_cloud = o3d.geometry.PointCloud(vector_3d)
+    tensor_3d = o3d.core.Tensor(points_3d_cleaned)
+    terrain_cloud = o3d.t.geometry.PointCloud()
+    terrain_cloud.point.positions = tensor_3d
 
     return terrain_cloud
+
 
 
 def influence_function(index, total_points):
@@ -713,57 +746,48 @@ def remove_points_inside_alpha_shape(points, alphashapes):
 
     return points
 
-# TODO: add understory
-# plan: 
-# 1. select at random from library of cut out plants
-# 2. select random location, get height from terrain map (location at least 1m away from trunk locations)
-# 3. get bbox of plant, check if collision with any trees
-# 4. transform pc of plant until no more collision
-
-# TODO: woody debris
-# plan: 2 options
-# 1. select at random from woody debris library
-# 2. do similar to plants, add afterwards
-# OR add in somewhere in tree placement stage, will make it likely closer to trees and better placed but complicates terrain generation etc.
-
-# TODO: labeling of ply: probs need to convert everything to Tensor version of o3d
-
-# TODO: postprocessing:
-# downsampling
-# transform everything to fit in unit cube? have seen this done in some ML papers. could also save both and compare
 
 
 def terrain2mesh(terrain_cloud, decimation_factor = 5):
-    # o3d triangulation does not work properly for this type of terrain mesh
-    # terrain_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(terrain_cloud, alpha=1)
 
-    tri = Delaunay(np.asarray(terrain_cloud.points)[:,:2])
+    # TODO: fix warnings
 
-    terrain_mesh = o3d.geometry.TriangleMesh(vertices=o3d.utility.Vector3dVector(terrain_cloud.points), triangles=o3d.utility.Vector3iVector(tri.simplices))
+    tri = Delaunay(terrain_cloud.point.positions.numpy()[:,:2])
+
+    terrain_mesh = o3d.t.geometry.TriangleMesh(vertex_positions=terrain_cloud.point.positions, triangle_indices=o3d.core.Tensor(tri.simplices))
 
     # perform decimation
-    n_triangles = len(terrain_mesh.triangles)
-    decimated_mesh = terrain_mesh.simplify_quadric_decimation(target_number_of_triangles=int(n_triangles//decimation_factor))
+    decimated_mesh = terrain_mesh.simplify_quadric_decimation(target_reduction = 1.0 - 1.0/2)
 
     # visualization for debug
     # terrain_mesh.translate([40,0,0])
     # decimated_mesh.translate([80,0,0])
-    # o3d.visualization.draw_geometries([terrain_cloud, terrain_mesh, decimated_mesh])
+    # o3d.visualization.draw([terrain_cloud, terrain_mesh, decimated_mesh])
 
     return decimated_mesh
 
 
 
+def save_tile():
+    # TODO
+    pass
+
+
+
 def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
+    start_time = time.process_time()
     trees = read_trees(mesh_dir, pc_dir, alpha=alpha)
 
     print(f"Read {len(trees)} trees")
 
-    plot, transforms = assemble_trees_grid(trees, n_trees=4, debug=True)
+    plot, transforms = assemble_trees_grid(trees, n_trees=4, debug=DEBUG)
     
     # apply derived transforms to pointcloud and get trunk locations
     merged_plot = None
+    if DEBUG:
+        merged_plot_debug = None
+
     trunk_hulls = {}
     alphashapes = {}
     for name in transforms:
@@ -779,10 +803,14 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
 
         # ugly code but for some reason o3d errors when appending to empty pointcloud
         if merged_plot is None:
+            if DEBUG:
+                merged_plot_debug = Tensor2VecPC(pc)
             # copy constructor
-            merged_plot = o3d.geometry.PointCloud(pc)
+            merged_plot = o3d.t.geometry.PointCloud(pc)
         else:
             merged_plot += pc
+            if DEBUG:
+                merged_plot_debug += Tensor2VecPC(pc)
         continue
 
 
@@ -790,8 +818,11 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     terrain_cloud = add_terrain(merged_plot, trunk_hulls, alphashapes)
     # merged_plot += terrain_cloud
 
+    if DEBUG:
+        terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
+
     # get mesh of terrain
-    terrain_mesh = terrain2mesh(terrain_cloud)
+    # terrain_mesh = terrain2mesh(terrain_cloud)
 
     
     # temp for debug
@@ -799,10 +830,18 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
     # merged_plot.paint_uniform_color([0,0,1])
 
     # plot.show()
+    
+    end_time = time.process_time()
+    print(f"Generating tile took {end_time-start_time} seconds")
 
-    o3d.visualization.draw_geometries([merged_plot, terrain_cloud])
+    if DEBUG:
+        o3d.visualization.draw_geometries([merged_plot_debug, terrain_cloud_debug])
 
-    # TODO: write tiles here? manual check?
+    # TODO: write tiles here
+    return
+
+
+
 
 
 def main():
@@ -835,8 +874,6 @@ def main():
     generate_tile(args.mesh_directory, args.pointcloud_directory, out_dir)
 
     return
-
-    
 
 if __name__ == "__main__":
     main()
