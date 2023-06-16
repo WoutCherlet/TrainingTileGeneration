@@ -16,7 +16,7 @@ from scipy.spatial import ConvexHull, Delaunay
 from perlin_numpy import generate_fractal_noise_2d
 
 
-DEBUG = True
+DEBUG = False
 
 SEMANTIC_MAP = {
     0: "terrain",
@@ -404,7 +404,7 @@ def get_trunk_convex_hull(pointcloud, slice_height=0.75):
     hull_points_3d = points_3d[hull.vertices]
     return hull_points_3d, hull
 
-def get_trunk_alpha_shape(pointcloud, slice_height=0.75):
+def get_trunk_alpha_shape(pointcloud, name, slice_height=0.75):
     # get axis aligned bounding box
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
 
@@ -422,20 +422,49 @@ def get_trunk_alpha_shape(pointcloud, slice_height=0.75):
 
     ALPHA = 10.0
     alpha_shape = alphashape.alphashape(points_projected_2d, ALPHA)
+    second_try = False
 
     # check if alphashape area is not inside tree by checking that area is large enough + check if not split up
     # if so, decrease alpha
     bbox_area = np.prod(np.amax(points_projected_2d, axis=0) - np.amin(points_projected_2d, axis=0))
     while isinstance(alpha_shape, shapely.MultiPolygon) or alpha_shape.area < 0.5*bbox_area:
         ALPHA -= 1
+        if ALPHA <= 0:
+            if not second_try:
+                print(f"Problem: got to alpha is 0, alphashape package hangs in this case, for pc {name}")
+                print(f"Trying again with double the slice_height")
+                if not isinstance(alpha_shape, shapely.MultiPolygon) and DEBUG:
+                    fig, ax = plt.subplots()
+                    ax.scatter(*zip(*points_projected_2d))
+                    x,y = alpha_shape.exterior.xy
+                    plt.plot(x,y)
+                    plt.show()
+                ALPHA = 10.0
+                max_bound_bbox[2] = min_bound_bbox[2] + slice_height*2
+                aaligned_bbox.set_max_bound(max_bound_bbox)
+                cropped_pointcloud = pointcloud.crop(aaligned_bbox)
+                points_3d = cropped_pointcloud.point.positions.numpy()
+                points_projected_2d = points_3d[:,:2]
+                second_try = True
+            else:
+                print(f"Bigger problem: got to alpha is 0 on second try for pc {name}")
+                fig, ax = plt.subplots()
+                ax.scatter(*zip(*points_projected_2d))
+                x,y = alpha_shape.exterior.xy
+                plt.plot(x,y)
+                plt.show()
+                break
+
+
         alpha_shape = alphashape.alphashape(points_projected_2d, ALPHA)
 
     # temp: plot alpha shape
-    # fig, ax = plt.subplots()
-    # ax.scatter(*zip(*points_projected_2d))
-    # x,y = alpha_shape.exterior.xy
-    # plt.plot(x,y)
-    # plt.show()
+    if second_try and DEBUG:
+        fig, ax = plt.subplots()
+        ax.scatter(*zip(*points_projected_2d))
+        x,y = alpha_shape.exterior.xy
+        plt.plot(x,y)
+        plt.show()
 
     return alpha_shape
 
@@ -515,12 +544,12 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
 
 
     # to pointcloud
-    tensor_3d = o3d.core.Tensor(points_3d_cleaned)
+    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float32))
     terrain_cloud = o3d.t.geometry.PointCloud()
     terrain_cloud.point.positions = tensor_3d
     # add labels to terrain cloud: semantic terrain label is 0, no instance so -1
-    terrain_cloud.point.semantic = o3d.core.Tensor(np.zeros(len(points_3d_cleaned), dtype=int))
-    terrain_cloud.point.instance = o3d.core.Tensor(np.repeat(-1, len(points_3d_cleaned)))
+    terrain_cloud.point.semantic = o3d.core.Tensor(np.zeros(len(points_3d_cleaned), dtype=np.int32)[:,None])
+    terrain_cloud.point.instance = o3d.core.Tensor((-1)*np.ones(len(points_3d_cleaned), dtype=np.int32)[:,None])
 
     return terrain_cloud
 
@@ -772,32 +801,20 @@ def terrain2mesh(terrain_cloud, decimation_factor = 5):
 
 
 
-def save_tile():
-    # TODO
-    pass
+def generate_tile(trees, debug=False):
+    N_TREES = 9
 
-
-
-def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
-
-    start_time = time.process_time()
-    trees = read_trees(mesh_dir, pc_dir, alpha=alpha)
-
-    print(f"Read {len(trees)} trees")
-
-    N_TREES = 4
-
-    plot, transforms = assemble_trees_grid(trees, n_trees=N_TREES, debug=DEBUG)
+    plot, transforms = assemble_trees_grid(trees, n_trees=N_TREES, debug=debug)
     
     # apply derived transforms to pointcloud and get trunk locations
-    merged_plot = None
-    if DEBUG:
+    merged_cloud = None
+    if debug:
         merged_plot_debug = None
 
     trunk_hulls = {}
     alphashapes = {}
 
-    CURRENT_INSTANCE_ID = 1
+    cur_instance_id = 1
 
     cmap = plt.get_cmap("Set1")
     n_colors = len(cmap.colors)
@@ -811,54 +828,77 @@ def generate_tile(mesh_dir, pc_dir, out_dir, alpha=None):
         pc = pc.transform(transform)
 
         
-        # add labels to terrain cloud: semantic terrain label is 1, unique instance label per tree
-        pc.point.semantic = o3d.core.Tensor(np.zeros(len(pc.point.positions), dtype=int))
-        pc.point.instance = o3d.core.Tensor(np.repeat(CURRENT_INSTANCE_ID, len(pc.point.positions)))
-        CURRENT_INSTANCE_ID += 1
+        # add labels to terrain cloud: semantic trees label is 1, unique instance label per tree
+        pc.point.semantic = o3d.core.Tensor(np.ones(len(pc.point.positions), dtype=np.int32)[:,None])
+        pc.point.instance = o3d.core.Tensor(cur_instance_id*np.ones(len(pc.point.positions), dtype=np.int32)[:,None])
+        cur_instance_id += 1
 
         trunk_hulls[name] = get_trunk_convex_hull(pc)
-        alphashapes[name] = get_trunk_alpha_shape(pc)
+        alphashapes[name] = get_trunk_alpha_shape(pc, name)
 
         # ugly code but for some reason o3d errors when appending to empty pointcloud
-        if merged_plot is None:
-            if DEBUG:
-                merged_plot_debug = Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(CURRENT_INSTANCE_ID-2) % n_colors])
+        if merged_cloud is None:
+            if debug:
+                merged_plot_debug = Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(cur_instance_id-2) % n_colors])
             # copy constructor
-            merged_plot = o3d.t.geometry.PointCloud(pc)
+            merged_cloud = o3d.t.geometry.PointCloud(pc)
         else:
-            merged_plot += pc
-            if DEBUG:
-                merged_plot_debug += Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(CURRENT_INSTANCE_ID-2) % n_colors])
+            merged_cloud += pc
+            if debug:
+                merged_plot_debug += Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(cur_instance_id-2) % n_colors])
         continue
 
 
     # add noisy terrain
-    terrain_cloud = add_terrain(merged_plot, trunk_hulls, alphashapes)
-    # merged_plot += terrain_cloud
+    terrain_cloud = add_terrain(merged_cloud, trunk_hulls, alphashapes)
 
-    if DEBUG:
+    if debug:
         terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
         terrain_cloud_debug.paint_uniform_color([0.75,0.75,0.75])
 
     # get mesh of terrain
     # terrain_mesh = terrain2mesh(terrain_cloud)
 
-    
-    # temp for debug
-    # terrain_cloud.paint_uniform_color([1,0,0])
-    # merged_plot.paint_uniform_color([0,0,1])
-
     # plot.show()
     
-    end_time = time.process_time()
-    print(f"Generating tile took {end_time-start_time} seconds")
 
-    if DEBUG:
+    if debug:
         o3d.visualization.draw_geometries([merged_plot_debug, terrain_cloud_debug])
 
-    # TODO: write tiles here
+    merged_cloud += terrain_cloud
+
+    return merged_cloud
+
+
+
+def save_tile(out_dir, out_pc, tile_id):
+
+    if not os.path.exists(out_dir):
+        os.mkdir(out_dir)
+
+    out_path = os.path.join(out_dir, f"Tile_{tile_id}.ply")
+
+    o3d.t.io.write_point_cloud(out_path, out_pc)
     return
 
+
+
+def generate_tiles(mesh_dir, pc_dir, out_dir, alpha=None, n_tiles=10):
+    # read trees
+    trees = read_trees(mesh_dir, pc_dir, alpha=alpha)
+
+    print(f"Read {len(trees)} trees")
+
+    print(f"Generating {n_tiles}")
+    for i in range(n_tiles):
+
+        start_time = time.process_time()
+        tile_cloud = generate_tile(trees, debug=DEBUG)
+        end_time = time.process_time()
+        print(f"Generated tile {i+1} in {end_time-start_time} seconds")
+
+        save_tile(out_dir, tile_cloud, i+1)
+    return
 
 
 
@@ -868,6 +908,7 @@ def main():
     parser.add_argument("-p", "--pointcloud_directory", required=True)
     parser.add_argument("-d", "--mesh_directory", default=None)
     parser.add_argument("-o", "--output_directory", default=None)
+    parser.add_argument("-n", "--n_tiles", default=10)
 
     args = parser.parse_args()
 
@@ -888,9 +929,9 @@ def main():
             return
         out_dir = args.output_directory
     else:
-        out_dir = os.path.join(args.pointcloud_directory, "tiles")
+        out_dir = os.path.join(args.pointcloud_directory, "synthetic_tiles")
     
-    generate_tile(args.mesh_directory, args.pointcloud_directory, out_dir)
+    generate_tiles(args.mesh_directory, args.pointcloud_directory, out_dir, n_tiles=args.n_tiles)
 
     return
 
