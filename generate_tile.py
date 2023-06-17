@@ -871,7 +871,7 @@ def generate_tile(trees, debug=False):
 
 
 
-def save_tile(out_dir, out_pc, tile_id):
+def save_tile(out_dir, out_pc, tile_id, downsampled=True):
 
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
@@ -879,6 +879,18 @@ def save_tile(out_dir, out_pc, tile_id):
     out_path = os.path.join(out_dir, f"Tile_{tile_id}.ply")
 
     o3d.t.io.write_point_cloud(out_path, out_pc)
+
+    # possibly also write downsampled version
+    if downsampled:
+        pc_downsampled = out_pc.voxel_down_sample(voxel_size=0.02)
+
+        out_dir_ds = os.path.join(out_dir, "downsampled")
+        if not os.path.exists(out_dir_ds):
+            os.mkdir(out_dir_ds)
+
+        out_path_ds = os.path.join(out_dir_ds, pc_downsampled)
+        
+        o3d.t.io.write_point_cloud(out_path_ds, pc_downsampled)
     return
 
 
