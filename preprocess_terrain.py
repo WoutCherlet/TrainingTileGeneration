@@ -59,8 +59,11 @@ def preprocess_terrain(terrain_cloud):
             if terrain_tile.is_empty():
                 continue
 
+
             # only keep tile if full size
             if tile_is_square_of_gridsize(terrain_tile, GRID_SIZE):
+                _, _ = extract_lowest(terrain_tile)
+                return
                 terrain_tile.paint_uniform_color(np.array([0,1,0]))
             else:
                 terrain_tile.paint_uniform_color(np.array([1,0,0]))
@@ -74,6 +77,52 @@ def preprocess_terrain(terrain_cloud):
 
     return
 
+
+def extract_lowest(terrain_tile):
+    # divide tile into bins of STEP_SIZE and select bottom points in each bin
+    STEP_SIZE = 0.02
+
+    min_bound = terrain_tile.get_min_bound()
+    max_bound = terrain_tile.get_max_bound()
+
+    x_range = np.arange(min_bound[0], max_bound[0], step=STEP_SIZE)
+    y_range = np.arange(min_bound[1], max_bound[1], step=STEP_SIZE)
+
+    bottom_cloud = o3d.geometry.PointCloud()
+    top_cloud = o3d.geometry.PointCloud()
+    
+    for x in x_range:
+        for y in y_range:
+            # crop to current bin
+            crop_bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound=np.array([x,y,min_bound[2]]), max_bound=np.array([x+STEP_SIZE, y+STEP_SIZE, max_bound[2]]))
+            cropped_tile = terrain_tile.crop(crop_bbox)
+
+            if cropped_tile.is_empty():
+                continue
+
+            min_bound_part = cropped_tile.get_min_bound()
+
+            # calculate mean of cropped tile
+            mean_coords, _ = cropped_tile.compute_mean_and_covariance()
+            # get bottom of tile based on mean
+            z_max = min_bound_part[2] + (mean_coords[2] - min_bound_part[2])*3/4
+
+            # crop top and bottom and add to tile top and bottom
+            crop_bottom_max = np.array([max_bound[0], max_bound[1], z_max])
+            crop_top_min = np.array([min_bound[0], min_bound[1], z_max])
+            crop_bbox_bottom = o3d.geometry.AxisAlignedBoundingBox(min_bound=min_bound, max_bound=crop_bottom_max)
+            crop_bbox_top = o3d.geometry.AxisAlignedBoundingBox(min_bound=crop_top_min, max_bound=max_bound)
+            bottom_cloud_part = cropped_tile.crop(crop_bbox_bottom)
+            bottom_cloud_part.paint_uniform_color(np.array([0,1,0]))
+            top_cloud_part = cropped_tile.crop(crop_bbox_top)
+            top_cloud_part.paint_uniform_color(np.array([1,0,0]))
+
+            bottom_cloud += bottom_cloud_part
+            top_cloud += top_cloud_part
+    
+    o3d.visualization.draw_geometries([bottom_cloud, top_cloud])
+
+    return bottom_cloud, top_cloud
 
 def main():
     parser = argparse.ArgumentParser()
