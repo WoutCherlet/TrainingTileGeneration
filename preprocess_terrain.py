@@ -2,6 +2,8 @@ import argparse
 import os
 import open3d as o3d
 import numpy as np
+from perlin_numpy import generate_fractal_noise_2d
+
 
 def tile_is_square_of_gridsize(tile_cloud, GRID_SIZE):
     BOUND = GRID_SIZE*0.1
@@ -62,8 +64,14 @@ def preprocess_terrain(terrain_cloud):
 
             # only keep tile if full size
             if tile_is_square_of_gridsize(terrain_tile, GRID_SIZE):
-                _, _ = extract_lowest_alt(terrain_tile)
+                bottom_cloud, top_cloud = extract_lowest(terrain_tile)
+                bottom_cloud_alt, top_cloud_alt = extract_lowest_alt(terrain_tile)
+                bottom_cloud_alt.translate(np.array([0.6, 0, 0]))
+                top_cloud_alt.translate(np.array([0.6,0,0]))
+
+                o3d.visualization.draw_geometries([bottom_cloud, top_cloud, bottom_cloud_alt, top_cloud_alt])
                 return
+                # TODO: TEMP: COLOR
                 terrain_tile.paint_uniform_color(np.array([0,1,0]))
             else:
                 terrain_tile.paint_uniform_color(np.array([1,0,0]))
@@ -78,9 +86,37 @@ def preprocess_terrain(terrain_cloud):
     return
 
 
+def generate_perlin_noise():
+    # sample of how perlin noise is generated in tile generation code, for testing purposes
+    POINTS_PER_METER = 10
+    X_SIZE = 0.5
+    Y_SIZE = 0.5
+
+    nx = POINTS_PER_METER * X_SIZE
+    ny = POINTS_PER_METER * Y_SIZE
+
+    RES = 4
+    LACUNARITY = 2
+    OCTAVES = 4
+
+    # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
+    shape_factor = RES*(LACUNARITY**(OCTAVES-1))
+    perlin_nx = nx - (nx % shape_factor) + shape_factor
+    perlin_ny = ny - (ny % shape_factor) + shape_factor
+
+    perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
+    perlin_noise = perlin_noise[:ny, :nx]
+    SCALE = 2
+    perlin_noise = perlin_noise * SCALE
+
+    return perlin_noise
+
+# TODO: check integration of both techniques with perlin noise.
+#  Base statistical method gives more uniform results but has some outliers in less dense areas which may cause problems
+#  Alt method based on raycloudtools is more patchy, as whole elevated patches can get removed, but is more smooth in general
+
 def extract_lowest(terrain_tile):
     # divide tile into bins of STEP_SIZE and select bottom points in each bin based on mean in that bin
-    # NOTE: alt method seems to give nicer results
     STEP_SIZE = 0.02
 
     min_bound = terrain_tile.get_min_bound()
@@ -120,8 +156,6 @@ def extract_lowest(terrain_tile):
 
             bottom_cloud += bottom_cloud_part
             top_cloud += top_cloud_part
-    
-    o3d.visualization.draw_geometries([bottom_cloud, top_cloud])
 
     return bottom_cloud, top_cloud
 
@@ -183,9 +217,6 @@ def extract_lowest_alt(terrain_tile):
     top_cloud = o3d.geometry.PointCloud()
     top_cloud.points = o3d.utility.Vector3dVector(np.array(points_top))
     top_cloud.paint_uniform_color(np.array([1,0,0]))
- 
-    o3d.visualization.draw_geometries([bottom_cloud, top_cloud])
-
     return bottom_cloud, top_cloud
 
 def main():

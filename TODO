@@ -15,4 +15,4 @@ TODO: postprocessing:
 
 TODO !!!! no instance as instance 0? mask3d reads ply as unsigned int so -1 fucks it up, check what mask3d expects of no instance in gt_data first
 
-TODO: better noisy terrain
+TODO: integrate noisy terrain tiles with perlin noise
