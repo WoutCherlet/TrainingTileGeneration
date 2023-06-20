@@ -515,7 +515,7 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
 
     perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
     perlin_noise = perlin_noise[:ny, :nx]
-    SCALE = 3
+    SCALE = 2
     perlin_noise = perlin_noise * SCALE
 
     # get influence map and height map of trunks to adapt terrain to trunk heights and locations

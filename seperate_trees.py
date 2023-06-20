@@ -9,16 +9,6 @@ from utils import read_clouds, combine_pcds, get_bbox
 
 DATA_DIR = "/home/wcherlet/data/Wytham2015"
 
-def display_inlier_outlier(cloud, ind):
-    inlier_cloud = cloud.select_by_index(ind)
-    outlier_cloud = cloud.select_by_index(ind, invert=True)
-
-    print("Showing outliers (red) and inliers (gray): ")
-    outlier_cloud.paint_uniform_color([1, 0, 0])
-    inlier_cloud.paint_uniform_color([0.8, 0.8, 0.8])
-    o3d.visualization.draw_geometries([inlier_cloud, outlier_cloud])
-
-
 
 def write_bboxs(pc_folder, bbox_extent, bbox_trees):
 
@@ -111,8 +101,8 @@ def isin_tolerance(A, B, tol):
     return np.minimum(lval, rval) <= tol # return a boolean array of A.shape where A is within tol distance of any element of B
 
 def isclose_nd(a,b):
-    a_rounded = np.around(a, decimals=1)
-    b_rounded = np.around(b, decimals=1)
+    a_rounded = np.around(a, decimals=2)
+    b_rounded = np.around(b, decimals=2)
     return isin_nd(a_rounded,b_rounded)
 
 def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
@@ -196,7 +186,23 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
     combine_pcds(understory_tiles, path_out=os.path.join(DATA_DIR, "understory.ply"))
 
     return
-            
+
+def get_terrain():
+    # TODO: terrain seperation
+    pass
+
+
+
+def display_inlier_outlier(cloud, ind):
+    inlier_cloud = cloud.select_by_index(ind)
+    outlier_cloud = cloud.select_by_index(ind, invert=True)
+
+    print("Showing outliers (red) and inliers (gray): ")
+    outlier_cloud.paint_uniform_color([1, 0, 0])
+    inlier_cloud.paint_uniform_color([0.8, 0.8, 0.8])
+    o3d.visualization.draw_geometries([inlier_cloud, outlier_cloud])
+
+
 def post_process_pc():
     understoryply = os.path.join(DATA_DIR, "understory.ply")
     # TODO: temp
@@ -218,6 +224,7 @@ def main():
     valid_tiles_path = os.path.join(DATA_DIR, 'valid_tiles.txt')
     clipped_tiles_dir = os.path.join(DATA_DIR, "tiles_clipped")
 
+
     # only run once!!
     # write_bboxs(pc_folder, bbox_extent, bbox_trees)
 
@@ -226,7 +233,7 @@ def main():
 
     # get_understory(pc_folder, clipped_tiles_dir, bbox_trees)
 
-    post_process_pc()
+    # post_process_pc()
     return
 
 

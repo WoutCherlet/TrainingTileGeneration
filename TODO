@@ -10,8 +10,9 @@ plan: 2 options
 1. select at random from woody debris library
 2. do similar to plants, add afterwards OR add in somewhere in tree placement stage, will make it likely closer to trees and better placed but complicates terrain generation etc.
 
-TODO: labeling of ply:
-5. also create downsampled version
-
 TODO: postprocessing:
 - transform everything to fit in unit cube? have seen this done in some ML papers. could also save both and compare
+
+TODO !!!! no instance as instance 0? mask3d reads ply as unsigned int so -1 fucks it up, check what mask3d expects of no instance in gt_data first
+
+TODO: better noisy terrain
