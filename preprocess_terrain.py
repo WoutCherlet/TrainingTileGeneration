@@ -36,7 +36,7 @@ def preprocess_terrain(terrain_cloud):
 
     GRID_SIZE = .5 # in metres
 
-    # TODO: we can get more tiles out of same plot if we rotate longest side to be parallel to xy
+    # TODO: we can get more tiles out of same plot if we rotate longest side to be parallel to xy (might not be worth the effort)
 
     min_bound = pc.get_min_bound()
     max_bound = pc.get_max_bound()
@@ -62,7 +62,7 @@ def preprocess_terrain(terrain_cloud):
 
             # only keep tile if full size
             if tile_is_square_of_gridsize(terrain_tile, GRID_SIZE):
-                _, _ = extract_lowest(terrain_tile)
+                _, _ = extract_lowest_alt(terrain_tile)
                 return
                 terrain_tile.paint_uniform_color(np.array([0,1,0]))
             else:
@@ -79,7 +79,8 @@ def preprocess_terrain(terrain_cloud):
 
 
 def extract_lowest(terrain_tile):
-    # divide tile into bins of STEP_SIZE and select bottom points in each bin
+    # divide tile into bins of STEP_SIZE and select bottom points in each bin based on mean in that bin
+    # NOTE: alt method seems to give nicer results
     STEP_SIZE = 0.02
 
     min_bound = terrain_tile.get_min_bound()
@@ -120,6 +121,69 @@ def extract_lowest(terrain_tile):
             bottom_cloud += bottom_cloud_part
             top_cloud += top_cloud_part
     
+    o3d.visualization.draw_geometries([bottom_cloud, top_cloud])
+
+    return bottom_cloud, top_cloud
+
+def extract_lowest_alt(terrain_tile):
+    # divide tile into bins of STEP_SIZE and select bottom points in each bin by comparing to neighbouring bins
+    STEP_SIZE = 0.01
+
+    min_bound = terrain_tile.get_min_bound()
+    max_bound = terrain_tile.get_max_bound()
+
+    x_range = np.arange(min_bound[0], max_bound[0], step=STEP_SIZE)
+    y_range = np.arange(min_bound[1], max_bound[1], step=STEP_SIZE)
+
+    bottom_cloud = o3d.geometry.PointCloud()
+    top_cloud = o3d.geometry.PointCloud()
+
+    x_bins = len(x_range)
+    y_bins = len(y_range)
+
+    # THIS ASSUMES POINT 0,0,0 CAN NEVER BE IN TILE?
+    lowest = np.ones((x_bins, y_bins, 3))*np.inf
+    points_arr = np.asarray(terrain_tile.points)
+
+    for point in points_arr:
+        bin_idx = (point - min_bound) // STEP_SIZE
+        idx_x = int(bin_idx[0])
+        idx_y = int(bin_idx[1])
+        if point[2] < lowest[idx_x][idx_y][2]:
+            lowest[idx_x][idx_y] = point
+        
+    points_bot = []
+    points_top = []
+    for point in points_arr:
+        bin_idx = (point - min_bound) // STEP_SIZE
+        i = int(bin_idx[0])
+        j = int(bin_idx[1])
+        i_min = max(0, i-1)
+        j_min = max(0, j-1)
+        i_max = min(i+1, x_bins-1)
+        j_max = min(j+1, y_bins-1)
+        remove = False
+        for x in range(i_min, i_max+1):
+            for y in range(j_min, j_max+1):
+                diff = point - lowest[x][y]
+                dist2d = diff[0]*diff[0] + diff[1]*diff[1]
+                if diff[2] > 0 and diff[2]*diff[2] > dist2d:
+                    remove = True
+                    break
+            if remove:
+                break
+        if remove:
+            points_top.append(point)
+        else:
+            points_bot.append(point)
+    
+    bottom_cloud = o3d.geometry.PointCloud()
+    bottom_cloud.points = o3d.utility.Vector3dVector(np.array(points_bot))
+    bottom_cloud.paint_uniform_color(np.array([0,1,0]))
+    top_cloud = o3d.geometry.PointCloud()
+    top_cloud.points = o3d.utility.Vector3dVector(np.array(points_top))
+    top_cloud.paint_uniform_color(np.array([1,0,0]))
+ 
     o3d.visualization.draw_geometries([bottom_cloud, top_cloud])
 
     return bottom_cloud, top_cloud
