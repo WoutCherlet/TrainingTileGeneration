@@ -4,6 +4,7 @@ import math as m
 import open3d as o3d
 import numpy as np
 from perlin_numpy import generate_fractal_noise_2d
+from scipy import interpolate
 
 
 POINTS_PER_METER = 10
@@ -111,6 +112,8 @@ def generate_perlin_noise():
     y = np.linspace(0, TILE_SIZE, num = ny)
     xv, yv = np.meshgrid(x, y)
 
+    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise.T) # need to transpose perlin noise for some reason, hope this doesn't fuck anything up later lol
+
     points_xy = np.array([xv.flatten(), yv.flatten()]).T
     z_arr = perlin_noise.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
@@ -119,7 +122,7 @@ def generate_perlin_noise():
     # cloud.points = o3d.utility.Vector3dVector(np.array(points_3d))
 
     # o3d.visualization.draw_geometries([cloud])
-    return points_3d
+    return points_3d, interpolator
 
 # TODO: check integration of both techniques with perlin noise.
 #  Base statistical method gives more uniform results but has some outliers in less dense areas which may cause problems
@@ -259,7 +262,7 @@ def get_closest_lowest(bins_lowest, i, j, point):
             return bins_lowest[closest_xy[0]][closest_xy[1]]
         index_offset += 1
 
-def overlay_noise(terrain_tile, noise_tile):
+def overlay_noise(terrain_tile, noise_tile, interpolator):
     STEP_SIZE = 0.005
 
     bottom_pc, top_pc, bins, bins_lowest = extract_lowest_alt(terrain_tile, step_size=STEP_SIZE)
@@ -269,6 +272,8 @@ def overlay_noise(terrain_tile, noise_tile):
     points_p_dim = POINTS_PER_METER*GRID_SIZE + 1
 
     corrected_points = []
+    
+    # interpolator = interpolate.interp2d(noise_tile[:,0], noise_tile[:,1], noise_tile[:,2])
 
     for i in range(len(bins)):
         for j in range(len(bins[0])):
@@ -284,20 +289,21 @@ def overlay_noise(terrain_tile, noise_tile):
                 lowest_point = bins_lowest[i][j]
                 lowest_in_tile = True
             
-            id_x = m.floor(bin_center_x * POINTS_PER_METER)
-            id_y = m.floor(bin_center_y * POINTS_PER_METER)
+            # id_x = m.floor(bin_center_x * POINTS_PER_METER)
+            # id_y = m.floor(bin_center_y * POINTS_PER_METER)
 
-            noise_point_tl = noise_tile[id_x + id_y*points_p_dim] # indexing flattened meshgrid coordinates # TODO: check if x and y are right or opposite
-            noise_point_bl = noise_tile[id_x + 1 + id_y*points_p_dim]
-            noise_point_tr = noise_tile[id_x + (id_y+1)*points_p_dim]
-            noise_point_br = noise_tile[id_x + 1 + (id_y+1)*points_p_dim]
+            # noise_point_tl = noise_tile[id_x + id_y*points_p_dim] # indexing flattened meshgrid coordinates # TODO: check if x and y are right or opposite
+            # noise_point_bl = noise_tile[id_x + 1 + id_y*points_p_dim]
+            # noise_point_tr = noise_tile[id_x + (id_y+1)*points_p_dim]
+            # noise_point_br = noise_tile[id_x + 1 + (id_y+1)*points_p_dim]
 
-            square_points = np.vstack((noise_point_tl, noise_point_bl, noise_point_tr, noise_point_br))
+            # square_points = np.vstack((noise_point_tl, noise_point_bl, noise_point_tr, noise_point_br))
 
-            weights = 1/np.linalg.norm((square_points[:,:2] - np.tile(center_arr, (4,1))), axis=1)
+            # weights = 1/np.linalg.norm((square_points[:,:2] - np.tile(center_arr, (4,1))), axis=1)
 
-            height = np.dot(weights, square_points[:,2])/ np.sum(weights)
+            # height = np.dot(weights, square_points[:,2])/ np.sum(weights)
 
+            height = interpolator((bin_center_x, bin_center_y))
             height_correction = height - lowest_point[2]
             corrected_point = lowest_point + np.array([0, 0, height_correction])
 
@@ -329,9 +335,9 @@ def main():
     
     terrain_tile = preprocess_terrain(args.terrain_cloud)
 
-    noise_tile = generate_perlin_noise()
+    noise_tile, interpolator = generate_perlin_noise()
 
-    overlay_noise(terrain_tile, noise_tile)
+    overlay_noise(terrain_tile, noise_tile, interpolator)
 
     return
 
