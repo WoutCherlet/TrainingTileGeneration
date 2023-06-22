@@ -500,13 +500,15 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
 
     POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
 
-    nx = round((max_x - min_x) * POINTS_PER_METER)
-    ny = round((max_y - min_y) * POINTS_PER_METER)
+    nx = round((max_x - min_x) * POINTS_PER_METER) + 1
+    ny = round((max_y - min_y) * POINTS_PER_METER) + 1
 
     # constants for noise generation
-    RES = 4
+    RES = 1
     LACUNARITY = 2
-    OCTAVES = 4
+    OCTAVES = 8
+
+    # TODO: get perlin noise first and give tree height of noise at trunk location
 
     # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
     shape_factor = RES*(LACUNARITY**(OCTAVES-1))
