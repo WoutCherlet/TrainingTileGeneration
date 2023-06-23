@@ -508,7 +508,7 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     LACUNARITY = 2
     OCTAVES = 8
 
-    # TODO: get perlin noise first and give tree height of noise at trunk location
+    # TODO: get perlin noise first and give tree height of noise at trunk location as estimate
 
     # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
     shape_factor = RES*(LACUNARITY**(OCTAVES-1))

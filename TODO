@@ -15,4 +15,8 @@ TODO: postprocessing:
 
 TODO !!!! no instance as instance 0? mask3d reads ply as unsigned int so -1 fucks it up, check what mask3d expects of no instance in gt_data first
 
-TODO: integrate noisy terrain tiles with perlin noise
+TODO: integrate noisy terrain tiles with perlin noise:
+   - build 'library' of cuttable and non cuttable tile
+   - integrate with tree trunks: select non cuttable/cuttable tiles
+   - experiment with tile size
+   - change up workflow: first generate perlin noise (size ??), then place trees + debris in grid at estimated height, shift them around, then calculate influence map and get final noise grid, then add terrain tiles
