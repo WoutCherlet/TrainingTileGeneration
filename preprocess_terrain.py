@@ -5,10 +5,12 @@ import open3d as o3d
 import numpy as np
 from perlin_numpy import generate_fractal_noise_2d
 from scipy import interpolate
+import time
 
 
 POINTS_PER_METER = 10
 GRID_SIZE = 1 # in metres
+VOXEL_SIZE = 0.01
 
 def tile_is_square_of_gridsize(tile_cloud, GRID_SIZE):
     BOUND = GRID_SIZE*0.1
@@ -70,6 +72,7 @@ def preprocess_terrain(terrain_cloud):
                 # TODO: TEMP: return one tile
                 translation = np.array([-i*GRID_SIZE, -j*GRID_SIZE, 0]) - min_bound
                 terrain_tile.translate(translation)
+                terrain_tile = terrain_tile.voxel_down_sample(VOXEL_SIZE)
                 return terrain_tile
                 # # TODO: TEMP: COLOR
                 terrain_tile.paint_uniform_color(np.array([0,1,0]))
@@ -88,10 +91,10 @@ def preprocess_terrain(terrain_cloud):
 
 def generate_perlin_noise():
     # sample of how perlin noise is generated in tile generation code, for testing purposes
-    TILE_SIZE = GRID_SIZE
+    NOISE_SIZE = 2
 
-    nx = round(POINTS_PER_METER * TILE_SIZE) + 1
-    ny = round(POINTS_PER_METER * TILE_SIZE) + 1
+    nx = round(POINTS_PER_METER * NOISE_SIZE) + 1
+    ny = round(POINTS_PER_METER * NOISE_SIZE) + 1
 
     RES = 1
     LACUNARITY = 2
@@ -108,21 +111,21 @@ def generate_perlin_noise():
     SCALE = 2
     perlin_noise = perlin_noise * SCALE
 
-    x = np.linspace(0, TILE_SIZE, num = nx)
-    y = np.linspace(0, TILE_SIZE, num = ny)
+    x = np.linspace(0, NOISE_SIZE, num = nx)
+    y = np.linspace(0, NOISE_SIZE, num = ny)
     xv, yv = np.meshgrid(x, y)
 
-    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise.T) # need to transpose perlin noise for some reason, hope this doesn't fuck anything up later lol
+    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise) # need to transpose perlin noise for some reason, hope this doesn't fuck anything up later lol
 
     points_xy = np.array([xv.flatten(), yv.flatten()]).T
-    z_arr = perlin_noise.flatten()
+    z_arr = perlin_noise.T.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
     
     # cloud = o3d.geometry.PointCloud()
     # cloud.points = o3d.utility.Vector3dVector(np.array(points_3d))
 
     # o3d.visualization.draw_geometries([cloud])
-    return points_3d, interpolator
+    return perlin_noise, points_3d, interpolator
 
 
 def extract_lowest(terrain_tile):
@@ -262,11 +265,11 @@ def get_closest_lowest(bins_lowest, i, j, point):
 def overlay_noise(terrain_tile, noise_tile, interpolator):
     STEP_SIZE = 0.01
     bottom_pc, top_pc, bins, bins_lowest = extract_lowest_alt(terrain_tile, step_size=STEP_SIZE)
-    bottom_points = []
 
     all_points = []
 
-    # TODO: move terrain tile to noise tile
+    min_bounds_noise = np.min(noise_tile, axis=0)
+    terrain_tile = terrain_tile.translate(min_bounds_noise-terrain_tile.get_min_bound())
 
     # for all bins
     for i in range(len(bins)):
@@ -274,50 +277,89 @@ def overlay_noise(terrain_tile, noise_tile, interpolator):
             if len(bins[i][j]) == 0:
                 continue
 
-            bin_center_x = i*STEP_SIZE+STEP_SIZE/2
-            bin_center_y = j*STEP_SIZE+STEP_SIZE/2
+            bin_center_x = i*STEP_SIZE+STEP_SIZE/2 + min_bounds_noise[0]
+            bin_center_y = j*STEP_SIZE+STEP_SIZE/2 + min_bounds_noise[1]
 
             center_arr = np.array([bin_center_x, bin_center_y])
 
             # get closest lowest point
-            lowest_in_tile = False
             if bins_lowest[i][j] is None:
                 lowest_point = np.array(get_closest_lowest(bins_lowest, i, j, center_arr))
             else:
                 lowest_point = bins_lowest[i][j]
-                lowest_in_tile = True
 
             # correct height of all points in tile to interpolated perlin noise height
             # we estimate the height of the terrain tile as the height of the closest lowest point
             height = interpolator((bin_center_x, bin_center_y))
             height_correction = height - lowest_point[2]
-            corrected_point = lowest_point + np.array([0, 0, height_correction])
-            if lowest_in_tile:
-                bottom_points.append(corrected_point)
 
             points = np.array(bins[i][j])
-            corrected_points = points + np.tile(np.array([0, 0, height_correction]), (len(points), 1))
+            corrected_points = points + np.array([0, 0, height_correction])
             all_points.append(corrected_points)
             
-
-    # print(all_points)
-    print(np.vstack(all_points).shape)
     corrected_cloud = o3d.geometry.PointCloud()
     corrected_cloud.points = o3d.utility.Vector3dVector(np.vstack(all_points))
-    corrected_cloud.paint_uniform_color(np.array([0,0,1]))
-
-
-    bottom_cloud = o3d.geometry.PointCloud()
-    bottom_cloud.points = o3d.utility.Vector3dVector(np.array(bottom_points))
-    bottom_cloud.paint_uniform_color(np.array([0,1,0]))
+    corrected_cloud.paint_uniform_color(np.array([0,1,0]))
 
     noise_cloud = o3d.geometry.PointCloud()
     noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_tile))
     noise_cloud.paint_uniform_color(np.array([1,0,0]))
 
-    o3d.visualization.draw_geometries([noise_cloud, corrected_cloud, bottom_cloud])
+    # o3d.visualization.draw_geometries([noise_cloud, corrected_cloud])
 
-    return
+    return noise_cloud, corrected_cloud
+
+
+def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tile):
+    pptile = GRID_SIZE*POINTS_PER_METER
+    n_x = len(noise_2D)
+    n_y = len(noise_2D[1])
+    n_tiles_x = m.ceil((n_x-1) / pptile)
+    n_tiles_y = m.ceil((n_y-1) / pptile)
+    tiles = []
+
+    full_noise_cloud = o3d.geometry.PointCloud()
+    full_noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
+    full_noise_cloud.paint_uniform_color(np.array([0,0,1]))
+
+    # vis = o3d.visualization.Visualizer()
+    # vis.create_window()
+    # ctr = vis.get_view_control()
+    # ctr.rotate(50.0, 0.0)
+    # vis.add_geometry(full_noise_cloud)
+
+    for i in range(n_tiles_x):
+        for j in range(n_tiles_y):
+            # slice coordinate list
+            cur_noise_tile = []
+
+            # need to get 2D tile from list of points, do some indexing magic
+            shift = i*pptile+j*n_x*pptile
+            for l in range(pptile+1):
+                cur_noise_tile.append(noise_coordinates[shift+l*n_x:shift+l*n_x+pptile+1])
+            cur_noise_tile = np.vstack(cur_noise_tile)
+            
+            # TODO: edge case: max(i+1, size)
+
+            noise_cloud, tile_cloud = overlay_noise(terrain_tile, cur_noise_tile, interpolator)
+            tiles.append(tile_cloud)
+            tiles.append(noise_cloud)
+            # vis.add_geometry(noise_cloud)
+            # vis.add_geometry(tile_cloud)
+            
+            # vis.update_geometry()
+            # vis.poll_events()
+            # vis.update_renderer()
+            # time.sleep(1)
+
+
+    # time.sleep(100)
+    # vis.destroy_window()
+
+    
+    o3d.visualization.draw_geometries(tiles)
+
+
 
 
 def main():
@@ -332,9 +374,9 @@ def main():
     
     terrain_tile = preprocess_terrain(args.terrain_cloud)
 
-    noise_tile, interpolator = generate_perlin_noise()
+    noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
 
-    overlay_noise(terrain_tile, noise_tile, interpolator)
+    fill_terrain(noise_2d, noise_coordinates, interpolator, terrain_tile)
 
     return
 
