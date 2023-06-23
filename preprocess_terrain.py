@@ -124,9 +124,6 @@ def generate_perlin_noise():
     # o3d.visualization.draw_geometries([cloud])
     return points_3d, interpolator
 
-# TODO: check integration of both techniques with perlin noise.
-#  Base statistical method gives more uniform results but has some outliers in less dense areas which may cause problems
-#  Alt method based on raycloudtools is more patchy, as whole elevated patches can get removed, but is more smooth in general
 
 def extract_lowest(terrain_tile):
     # divide tile into bins of STEP_SIZE and select bottom points in each bin based on mean in that bin
@@ -263,62 +260,62 @@ def get_closest_lowest(bins_lowest, i, j, point):
         index_offset += 1
 
 def overlay_noise(terrain_tile, noise_tile, interpolator):
-    STEP_SIZE = 0.005
-
+    STEP_SIZE = 0.01
     bottom_pc, top_pc, bins, bins_lowest = extract_lowest_alt(terrain_tile, step_size=STEP_SIZE)
+    bottom_points = []
 
-    # for each bin: get closest 4 noise points in xy:
+    all_points = []
 
-    points_p_dim = POINTS_PER_METER*GRID_SIZE + 1
+    # TODO: move terrain tile to noise tile
 
-    corrected_points = []
-    
-    # interpolator = interpolate.interp2d(noise_tile[:,0], noise_tile[:,1], noise_tile[:,2])
-
+    # for all bins
     for i in range(len(bins)):
         for j in range(len(bins[0])):
+            if len(bins[i][j]) == 0:
+                continue
+
             bin_center_x = i*STEP_SIZE+STEP_SIZE/2
             bin_center_y = j*STEP_SIZE+STEP_SIZE/2
 
             center_arr = np.array([bin_center_x, bin_center_y])
 
+            # get closest lowest point
             lowest_in_tile = False
             if bins_lowest[i][j] is None:
                 lowest_point = np.array(get_closest_lowest(bins_lowest, i, j, center_arr))
             else:
                 lowest_point = bins_lowest[i][j]
                 lowest_in_tile = True
-            
-            # id_x = m.floor(bin_center_x * POINTS_PER_METER)
-            # id_y = m.floor(bin_center_y * POINTS_PER_METER)
 
-            # noise_point_tl = noise_tile[id_x + id_y*points_p_dim] # indexing flattened meshgrid coordinates # TODO: check if x and y are right or opposite
-            # noise_point_bl = noise_tile[id_x + 1 + id_y*points_p_dim]
-            # noise_point_tr = noise_tile[id_x + (id_y+1)*points_p_dim]
-            # noise_point_br = noise_tile[id_x + 1 + (id_y+1)*points_p_dim]
-
-            # square_points = np.vstack((noise_point_tl, noise_point_bl, noise_point_tr, noise_point_br))
-
-            # weights = 1/np.linalg.norm((square_points[:,:2] - np.tile(center_arr, (4,1))), axis=1)
-
-            # height = np.dot(weights, square_points[:,2])/ np.sum(weights)
-
+            # correct height of all points in tile to interpolated perlin noise height
+            # we estimate the height of the terrain tile as the height of the closest lowest point
             height = interpolator((bin_center_x, bin_center_y))
             height_correction = height - lowest_point[2]
             corrected_point = lowest_point + np.array([0, 0, height_correction])
-
             if lowest_in_tile:
-                corrected_points.append(corrected_point)
-    
+                bottom_points.append(corrected_point)
+
+            points = np.array(bins[i][j])
+            corrected_points = points + np.tile(np.array([0, 0, height_correction]), (len(points), 1))
+            all_points.append(corrected_points)
+            
+
+    # print(all_points)
+    print(np.vstack(all_points).shape)
+    corrected_cloud = o3d.geometry.PointCloud()
+    corrected_cloud.points = o3d.utility.Vector3dVector(np.vstack(all_points))
+    corrected_cloud.paint_uniform_color(np.array([0,0,1]))
+
+
     bottom_cloud = o3d.geometry.PointCloud()
-    bottom_cloud.points = o3d.utility.Vector3dVector(np.array(corrected_points))
+    bottom_cloud.points = o3d.utility.Vector3dVector(np.array(bottom_points))
     bottom_cloud.paint_uniform_color(np.array([0,1,0]))
 
     noise_cloud = o3d.geometry.PointCloud()
     noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_tile))
     noise_cloud.paint_uniform_color(np.array([1,0,0]))
 
-    o3d.visualization.draw_geometries([bottom_cloud, noise_cloud])
+    o3d.visualization.draw_geometries([noise_cloud, corrected_cloud, bottom_cloud])
 
     return
 
