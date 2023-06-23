@@ -91,10 +91,12 @@ def preprocess_terrain(terrain_cloud):
 
 def generate_perlin_noise():
     # sample of how perlin noise is generated in tile generation code, for testing purposes
-    NOISE_SIZE = 2
+    NOISE_SIZE_X = 2.3
+    NOISE_SIZE_Y = 3.4
 
-    nx = round(POINTS_PER_METER * NOISE_SIZE) + 1
-    ny = round(POINTS_PER_METER * NOISE_SIZE) + 1
+
+    nx = round(POINTS_PER_METER * NOISE_SIZE_X) + 1
+    ny = round(POINTS_PER_METER * NOISE_SIZE_Y) + 1
 
     RES = 1
     LACUNARITY = 2
@@ -105,17 +107,17 @@ def generate_perlin_noise():
     perlin_nx = nx - (nx % shape_factor) + shape_factor
     perlin_ny = ny - (ny % shape_factor) + shape_factor
 
-    perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
-    perlin_noise = perlin_noise[:ny, :nx]
+    perlin_noise = generate_fractal_noise_2d((perlin_nx, perlin_ny), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
+    perlin_noise = perlin_noise[:nx, :ny]
 
-    SCALE = 2
+    SCALE = 3
     perlin_noise = perlin_noise * SCALE
 
-    x = np.linspace(0, NOISE_SIZE, num = nx)
-    y = np.linspace(0, NOISE_SIZE, num = ny)
+    x = np.linspace(0, NOISE_SIZE_X, num = nx)
+    y = np.linspace(0, NOISE_SIZE_Y, num = ny)
     xv, yv = np.meshgrid(x, y)
 
-    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise) # need to transpose perlin noise for some reason, hope this doesn't fuck anything up later lol
+    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise)
 
     points_xy = np.array([xv.flatten(), yv.flatten()]).T
     z_arr = perlin_noise.T.flatten()
@@ -268,12 +270,19 @@ def overlay_noise(terrain_tile, noise_tile, interpolator):
 
     all_points = []
 
+    # move terrain tile to noise 
     min_bounds_noise = np.min(noise_tile, axis=0)
     terrain_tile = terrain_tile.translate(min_bounds_noise-terrain_tile.get_min_bound())
 
-    # for all bins
-    for i in range(len(bins)):
-        for j in range(len(bins[0])):
+    max_bounds_noise = np.max(noise_tile, axis=0)
+    extent_noise = max_bounds_noise - min_bounds_noise
+
+    max_num_bins_x = m.floor((1/STEP_SIZE)*extent_noise[0])
+    max_num_bins_y = m.floor((1/STEP_SIZE)*extent_noise[1])
+
+    # for all bins within noise tile
+    for i in range(max_num_bins_x):
+        for j in range(max_num_bins_y):
             if len(bins[i][j]) == 0:
                 continue
 
@@ -311,16 +320,18 @@ def overlay_noise(terrain_tile, noise_tile, interpolator):
 
 
 def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tile):
+
+    # get dimensions of noise terrain to fill up
     pptile = GRID_SIZE*POINTS_PER_METER
     n_x = len(noise_2D)
     n_y = len(noise_2D[1])
     n_tiles_x = m.ceil((n_x-1) / pptile)
+    x_edge_points_rng = (n_x-1) % pptile
     n_tiles_y = m.ceil((n_y-1) / pptile)
-    tiles = []
-
-    full_noise_cloud = o3d.geometry.PointCloud()
-    full_noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
-    full_noise_cloud.paint_uniform_color(np.array([0,0,1]))
+    y_edge_points_rng = (n_x-1) % pptile
+    # full_noise_cloud = o3d.geometry.PointCloud()
+    # full_noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
+    # full_noise_cloud.paint_uniform_color(np.array([0,0,1]))
 
     # vis = o3d.visualization.Visualizer()
     # vis.create_window()
@@ -328,18 +339,27 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tile):
     # ctr.rotate(50.0, 0.0)
     # vis.add_geometry(full_noise_cloud)
 
+    tiles = []
     for i in range(n_tiles_x):
         for j in range(n_tiles_y):
             # slice coordinate list
             cur_noise_tile = []
 
-            # need to get 2D tile from list of points, do some indexing magic
-            shift = i*pptile+j*n_x*pptile
-            for l in range(pptile+1):
-                cur_noise_tile.append(noise_coordinates[shift+l*n_x:shift+l*n_x+pptile+1])
-            cur_noise_tile = np.vstack(cur_noise_tile)
+            # need to get 2D tile from list of points, do some indexing magic based on the meshgrid format
+            x_index_range = pptile + 1
+            y_index_range = pptile + 1
+            # handle edge cases, little ugly but oh well
+            if i == (n_tiles_x-1) and x_edge_points_rng != 0:
+                x_index_range = x_edge_points_rng + 1
+            if j == (n_tiles_y - 1) and y_edge_points_rng != 0:
+                y_index_range = y_edge_points_rng + 1
             
-            # TODO: edge case: max(i+1, size)
+            # shift in array of points, x is row index, y is column index
+            shift = i*pptile+j*n_x*pptile
+            for l in range(y_index_range):
+                cur_noise_tile.append(noise_coordinates[shift+l*n_x:shift+l*n_x+x_index_range])
+            cur_noise_tile = np.vstack(cur_noise_tile)
+
 
             noise_cloud, tile_cloud = overlay_noise(terrain_tile, cur_noise_tile, interpolator)
             tiles.append(tile_cloud)
@@ -356,7 +376,7 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tile):
     # time.sleep(100)
     # vis.destroy_window()
 
-    
+    # tiles.append(full_noise_cloud)
     o3d.visualization.draw_geometries(tiles)
 
 
