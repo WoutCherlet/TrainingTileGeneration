@@ -504,6 +504,7 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     ny = round((max_y - min_y) * POINTS_PER_METER) + 1
 
     # constants for noise generation
+    # TODO: experiment with making these slightly random to get more extreme terrains
     RES = 1
     LACUNARITY = 2
     OCTAVES = 8

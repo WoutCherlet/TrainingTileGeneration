@@ -5,6 +5,7 @@ import open3d as o3d
 import numpy as np
 from perlin_numpy import generate_fractal_noise_2d
 from scipy import interpolate
+import random
 import time
 
 
@@ -69,30 +70,28 @@ def preprocess_terrain(terrain_cloud):
 
             # only keep tile if full size
             if tile_is_square_of_gridsize(terrain_tile, GRID_SIZE):
-                # TODO: TEMP: return one tile
                 translation = np.array([-i*GRID_SIZE, -j*GRID_SIZE, 0]) - min_bound
                 terrain_tile.translate(translation)
                 terrain_tile = terrain_tile.voxel_down_sample(VOXEL_SIZE)
-                return terrain_tile
+                tiles.append(terrain_tile)
                 # # TODO: TEMP: COLOR
-                terrain_tile.paint_uniform_color(np.array([0,1,0]))
+                # terrain_tile.paint_uniform_color(np.array([0,1,0]))
             else:
                 terrain_tile.paint_uniform_color(np.array([1,0,0]))
 
             # TODO: TEMP: slight shift for visualization
-            terrain_tile.translate(np.array([i*visualization_shift, j*visualization_shift, 0]))
+            # terrain_tile.translate(np.array([i*visualization_shift, j*visualization_shift, 0]))
+            # tiles.append(terrain_tile)
 
-            tiles.append(terrain_tile)
+    # o3d.visualization.draw_geometries(tiles)
 
-    o3d.visualization.draw_geometries(tiles)
-
-    return
+    return tiles
 
 
 def generate_perlin_noise():
     # sample of how perlin noise is generated in tile generation code, for testing purposes
-    NOISE_SIZE_X = 2.3
-    NOISE_SIZE_Y = 3.4
+    NOISE_SIZE_X = 3
+    NOISE_SIZE_Y = 3
 
 
     nx = round(POINTS_PER_METER * NOISE_SIZE_X) + 1
@@ -110,7 +109,7 @@ def generate_perlin_noise():
     perlin_noise = generate_fractal_noise_2d((perlin_nx, perlin_ny), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
     perlin_noise = perlin_noise[:nx, :ny]
 
-    SCALE = 3
+    SCALE = 2
     perlin_noise = perlin_noise * SCALE
 
     x = np.linspace(0, NOISE_SIZE_X, num = nx)
@@ -319,7 +318,7 @@ def overlay_noise(terrain_tile, noise_tile, interpolator):
     return noise_cloud, corrected_cloud
 
 
-def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tile):
+def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
 
     # get dimensions of noise terrain to fill up
     pptile = GRID_SIZE*POINTS_PER_METER
@@ -329,13 +328,17 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tile):
     x_edge_points_rng = (n_x-1) % pptile
     n_tiles_y = m.ceil((n_y-1) / pptile)
     y_edge_points_rng = (n_x-1) % pptile
+
+    
+    print(f"Overlaying noise, {n_tiles_x*n_tiles_y} tiles of size {GRID_SIZE}x{GRID_SIZE}")
+    print(f"Selecting from library of {len(terrain_tiles)} cuttable tiles and TODO noncuttable tiles")
     # full_noise_cloud = o3d.geometry.PointCloud()
     # full_noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
     # full_noise_cloud.paint_uniform_color(np.array([0,0,1]))
 
     # vis = o3d.visualization.Visualizer()
     # vis.create_window()
-    # ctr = vis.get_view_control()
+    # ctr = vis.get_view_control() # TODO: if we can fix this, it's a nice visualization
     # ctr.rotate(50.0, 0.0)
     # vis.add_geometry(full_noise_cloud)
 
@@ -360,14 +363,15 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tile):
                 cur_noise_tile.append(noise_coordinates[shift+l*n_x:shift+l*n_x+x_index_range])
             cur_noise_tile = np.vstack(cur_noise_tile)
 
+            # TODO: replace this by shuffled list and mod index
+            cur_terrain_tile = random.choice(terrain_tiles)
 
-            noise_cloud, tile_cloud = overlay_noise(terrain_tile, cur_noise_tile, interpolator)
+            noise_cloud, tile_cloud = overlay_noise(cur_terrain_tile, cur_noise_tile, interpolator)
             tiles.append(tile_cloud)
             tiles.append(noise_cloud)
             # vis.add_geometry(noise_cloud)
             # vis.add_geometry(tile_cloud)
             
-            # vis.update_geometry()
             # vis.poll_events()
             # vis.update_renderer()
             # time.sleep(1)
@@ -378,6 +382,7 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tile):
 
     # tiles.append(full_noise_cloud)
     o3d.visualization.draw_geometries(tiles)
+    
 
 
 
@@ -392,11 +397,11 @@ def main():
         print(f"Couldn't read input dir {args.terrain_cloud}!")
         return
     
-    terrain_tile = preprocess_terrain(args.terrain_cloud)
+    terrain_tiles = preprocess_terrain(args.terrain_cloud)
 
     noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
 
-    fill_terrain(noise_2d, noise_coordinates, interpolator, terrain_tile)
+    fill_terrain(noise_2d, noise_coordinates, interpolator, terrain_tiles)
 
     return
 
