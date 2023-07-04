@@ -14,7 +14,7 @@ GRID_SIZE = 1 # in metres
 VOXEL_SIZE = 0.01
 
 def tile_is_square_of_gridsize(tile_cloud, GRID_SIZE):
-    BOUND = GRID_SIZE*0.1
+    BOUND = GRID_SIZE*0.075
 
     tile_min_bound = tile_cloud.get_min_bound()
     tile_max_bound = tile_cloud.get_max_bound()
@@ -43,8 +43,6 @@ def tile_is_square_of_gridsize(tile_cloud, GRID_SIZE):
 
 def preprocess_terrain(terrain_cloud):
     pc = o3d.io.read_point_cloud(terrain_cloud)
-
-    # TODO: we can get more tiles out of same plot if we rotate longest side to be parallel to xy (might not be worth the effort)
 
     min_bound = pc.get_min_bound()
     max_bound = pc.get_max_bound()
@@ -75,7 +73,7 @@ def preprocess_terrain(terrain_cloud):
                 terrain_tile = terrain_tile.voxel_down_sample(VOXEL_SIZE)
                 tiles.append(terrain_tile)
                 # # TODO: TEMP: COLOR
-                # terrain_tile.paint_uniform_color(np.array([0,1,0]))
+                terrain_tile.paint_uniform_color(np.array([0,1,0]))
             else:
                 terrain_tile.paint_uniform_color(np.array([1,0,0]))
 
@@ -90,8 +88,8 @@ def preprocess_terrain(terrain_cloud):
 
 def generate_perlin_noise():
     # sample of how perlin noise is generated in tile generation code, for testing purposes
-    NOISE_SIZE_X = 3
-    NOISE_SIZE_Y = 3
+    NOISE_SIZE_X = 2
+    NOISE_SIZE_Y = 2
 
 
     nx = round(POINTS_PER_METER * NOISE_SIZE_X) + 1
@@ -307,7 +305,7 @@ def overlay_noise(terrain_tile, noise_tile, interpolator):
             
     corrected_cloud = o3d.geometry.PointCloud()
     corrected_cloud.points = o3d.utility.Vector3dVector(np.vstack(all_points))
-    corrected_cloud.paint_uniform_color(np.array([0,1,0]))
+    # corrected_cloud.paint_uniform_color(np.array([0,1,0]))
 
     noise_cloud = o3d.geometry.PointCloud()
     noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_tile))
@@ -364,6 +362,7 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
             cur_noise_tile = np.vstack(cur_noise_tile)
 
             # TODO: replace this by shuffled list and mod index
+            # TODO: randomly rotate tile
             cur_terrain_tile = random.choice(terrain_tiles)
 
             noise_cloud, tile_cloud = overlay_noise(cur_terrain_tile, cur_noise_tile, interpolator)
@@ -385,11 +384,48 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
     
 
 
+def build_library(terrain_cloud, out_dir):
+    # tile plot
+    plotname = os.path.basename(terrain_cloud)[:-4]
+    tiles = preprocess_terrain(terrain_cloud)
+
+    # prepare output dirs
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    cuttable_out_dir = os.path.join(out_dir, f"tiled_{GRID_SIZE}", "cuttable")
+    non_cuttable_out_dir = os.path.join(out_dir, f"tiled_{GRID_SIZE}", "non_cuttable")
+    all_out_dir = os.path.join(out_dir, f"tiled_{GRID_SIZE}", "all")
+    os.makedirs(cuttable_out_dir)
+    os.makedirs(non_cuttable_out_dir)
+    os.makedirs(all_out_dir)
+
+    # visualize tile and classify
+    for i, tile in enumerate(tiles):
+        o3d.visualization.draw_geometries([tile])
+
+        cuttable = input("Type 'y' if tile is cuttable, type 'n' if not cuttable: ")
+
+        while cuttable not in ["y", "n"]:
+            print(f"Your input: {cuttable}")
+            print("Please select 'y' or 'n':")
+            cuttable = input()
+
+        if cuttable == "y":
+            o3d.io.write_point_cloud(os.path.join(cuttable_out_dir, f"{plotname}_tile{i}.ply"), tile)
+        elif cuttable == "n":
+            o3d.io.write_point_cloud(os.path.join(non_cuttable_out_dir, f"{plotname}_tile{i}.ply"), tile)
+
+        # also backup all tiles in one directory
+        o3d.io.write_point_cloud(os.path.join(all_out_dir, f"{plotname}_tile{i}.ply"), tile)
+
+    return
+
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--terrain_cloud", required=True)
+    parser.add_argument("-o", "--out_dir")
 
     args = parser.parse_args()
 
@@ -397,11 +433,13 @@ def main():
         print(f"Couldn't read input dir {args.terrain_cloud}!")
         return
     
-    terrain_tiles = preprocess_terrain(args.terrain_cloud)
+    build_library(args.terrain_cloud, args.out_dir)
 
-    noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
+    # terrain_tiles = preprocess_terrain(args.terrain_cloud)
 
-    fill_terrain(noise_2d, noise_coordinates, interpolator, terrain_tiles)
+    # noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
+
+    # fill_terrain(noise_2d, noise_coordinates, interpolator, terrain_tiles)
 
     return
 
