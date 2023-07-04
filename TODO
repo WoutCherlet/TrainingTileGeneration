@@ -20,3 +20,6 @@ TODO: integrate noisy terrain tiles with perlin noise:
    - integrate with tree trunks: select non cuttable/cuttable tiles
    - experiment with tile size
    - change up workflow: first generate perlin noise (size ??), then place trees + debris in grid at estimated height, shift them around, then calculate influence map and get final noise grid, then add terrain tiles
+
+TODO: slope:
+  - also have some tiles with gradient, can calculate independent of noise and add as height map, probably for v2

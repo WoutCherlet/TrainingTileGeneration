@@ -88,42 +88,73 @@ def preprocess_terrain(terrain_cloud):
 
 def generate_perlin_noise():
     # sample of how perlin noise is generated in tile generation code, for testing purposes
-    NOISE_SIZE_X = 2
-    NOISE_SIZE_Y = 2
+    NOISE_SIZE_X = 50
+    NOISE_SIZE_Y = 50
 
 
     nx = round(POINTS_PER_METER * NOISE_SIZE_X) + 1
     ny = round(POINTS_PER_METER * NOISE_SIZE_Y) + 1
 
-    RES = 1
+    RES = 4
     LACUNARITY = 2
-    OCTAVES = 8
+    OCTAVES = 6
+    PERSISTENCE = 0.4
 
     # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
     shape_factor = RES*(LACUNARITY**(OCTAVES-1))
     perlin_nx = nx - (nx % shape_factor) + shape_factor
     perlin_ny = ny - (ny % shape_factor) + shape_factor
 
-    perlin_noise = generate_fractal_noise_2d((perlin_nx, perlin_ny), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
-    perlin_noise = perlin_noise[:nx, :ny]
+    print(nx, ny)
+    print(perlin_nx, perlin_ny)
 
-    SCALE = 2
+    perlin_noise = generate_fractal_noise_2d((perlin_nx, perlin_ny), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY, persistence=PERSISTENCE)
+    perlin_noise_crop = perlin_noise[:nx, :ny]
+
+    # TODO: problem with noise generation:
+    # generation is size-specific 
+    # ie will give good noise distribution and for whole tile of size (perlin_nx, perlin_ny)
+    # when cropping only small part is selected, and a lot of diversity is lost
+
+    # IDEA: (might be overengineered):
+    # get distribution of original noise and rescale cropped noise to these dimensions
+    # might still lose a lot of detail depending on plot size
+
+    # better: just use known decent settings for big size and then crop
+
+    SCALE = 2.5
+    perlin_noise_crop = perlin_noise_crop * SCALE
+
     perlin_noise = perlin_noise * SCALE
 
     x = np.linspace(0, NOISE_SIZE_X, num = nx)
     y = np.linspace(0, NOISE_SIZE_Y, num = ny)
     xv, yv = np.meshgrid(x, y)
 
-    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise)
+    perlin_x = np.linspace(0, round(perlin_nx / POINTS_PER_METER), num = perlin_nx)
+    perlin_y = np.linspace(0, round(perlin_ny / POINTS_PER_METER), num = perlin_ny)
+    perlinxv, perlinyv = np.meshgrid(perlin_x, perlin_y)
+
+    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise_crop)
 
     points_xy = np.array([xv.flatten(), yv.flatten()]).T
-    z_arr = perlin_noise.T.flatten()
+    z_arr = perlin_noise_crop.T.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
-    
-    # cloud = o3d.geometry.PointCloud()
-    # cloud.points = o3d.utility.Vector3dVector(np.array(points_3d))
 
-    # o3d.visualization.draw_geometries([cloud])
+    perlin_xy = np.array([perlinxv.flatten(), perlinyv.flatten()]).T
+    z_arr_perlin = perlin_noise.T.flatten()
+    perlin_points_3d = np.column_stack((perlin_xy, z_arr_perlin))
+    
+    cloud = o3d.geometry.PointCloud()
+    cloud.points = o3d.utility.Vector3dVector(np.array(points_3d))
+    cloud.paint_uniform_color(np.array([0,1,0]))
+
+    perlin_cloud = o3d.geometry.PointCloud()
+    perlin_cloud.points = o3d.utility.Vector3dVector(np.array(perlin_points_3d))
+    perlin_cloud.paint_uniform_color(np.array([1,0,0]))
+    
+
+    o3d.visualization.draw_geometries([cloud, perlin_cloud])
     return perlin_noise, points_3d, interpolator
 
 
@@ -423,21 +454,29 @@ def build_library(terrain_cloud, out_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--terrain_cloud", required=True)
-    parser.add_argument("-o", "--out_dir")
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("-t", "--terrain_cloud", required=True)
+    # parser.add_argument("-o", "--out_dir")
 
-    args = parser.parse_args()
+    # args = parser.parse_args()
 
-    if not os.path.exists(args.terrain_cloud):
-        print(f"Couldn't read input dir {args.terrain_cloud}!")
-        return
+    # if not os.path.exists(args.terrain_cloud):
+        # print(f"Couldn't read input dir {args.terrain_cloud}!")
+        # return
     
-    build_library(args.terrain_cloud, args.out_dir)
+    # build_library(args.terrain_cloud, args.out_dir)
 
     # terrain_tiles = preprocess_terrain(args.terrain_cloud)
 
-    # noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
+    noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
+
+    
+    # noise_cloud = o3d.geometry.PointCloud()
+    # noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
+
+    # o3d.visualization.draw_geometries([noise_cloud])
+
+
 
     # fill_terrain(noise_2d, noise_coordinates, interpolator, terrain_tiles)
 

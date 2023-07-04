@@ -192,6 +192,7 @@ def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manage
     min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
 
     # maximal absolute height value
+    # TODO: set z_target based on noise value after placing tree at target x,y of bbox
     z_target = generate_random_tree_height()
 
     initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, z_target-min_z_tree])
@@ -318,6 +319,7 @@ def assemble_trees_grid(trees, n_trees=9, debug=False):
             # start plot at 0,0,0
             print(f"Placing tree {name}")
             min_x_mesh, min_y_mesh, min_z_mesh = tri_mesh.bounds[0]
+            # TODO: change to perlin noise height
             z_target = generate_random_tree_height()
             origin_translation = trimesh.transformations.translation_matrix(np.array([-min_x_mesh, -min_y_mesh, z_target-min_z_mesh]))
             tri_mesh.apply_transform(origin_translation)
@@ -505,20 +507,25 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
 
     # constants for noise generation
     # TODO: experiment with making these slightly random to get more extreme terrains
-    RES = 1
+    RES = 4
     LACUNARITY = 2
     OCTAVES = 8
+    PERSISTENCE = 0.4
 
     # TODO: get perlin noise first and give tree height of noise at trunk location as estimate
+    # plan: generate 50 by 50 grid (if tile to large, write out to different folder to inspect and don't use)
+    # when placing initial bounding box of tree, get it's center location and use this to set its height
+    # could also detect likely direction, but probs not necessary
+
 
     # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
     shape_factor = RES*(LACUNARITY**(OCTAVES-1))
     perlin_nx = nx - (nx % shape_factor) + shape_factor
     perlin_ny = ny - (ny % shape_factor) + shape_factor
 
-    perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY)
+    perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY, persistence=PERSISTENCE)
     perlin_noise = perlin_noise[:ny, :nx]
-    SCALE = 2
+    SCALE = 2.5
     perlin_noise = perlin_noise * SCALE
 
     # get influence map and height map of trunks to adapt terrain to trunk heights and locations
@@ -807,6 +814,8 @@ def terrain2mesh(terrain_cloud, decimation_factor = 5):
 def generate_tile(trees, debug=False):
     N_TREES = 9
 
+    # TODO: generate perlin noise here
+
     plot, transforms = assemble_trees_grid(trees, n_trees=N_TREES, debug=debug)
     
     # apply derived transforms to pointcloud and get trunk locations
@@ -852,15 +861,12 @@ def generate_tile(trees, debug=False):
         continue
 
 
-    # add noisy terrain
+    # TODO: now perlin noise is generated here, do it before assembling trees, then use this function to smooth out height maps
     terrain_cloud = add_terrain(merged_cloud, trunk_hulls, alphashapes)
 
     if debug:
         terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
         terrain_cloud_debug.paint_uniform_color([0.75,0.75,0.75])
-
-    # get mesh of terrain
-    # terrain_mesh = terrain2mesh(terrain_cloud)
 
     # plot.show()
     
@@ -891,7 +897,7 @@ def save_tile(out_dir, out_pc, tile_id, downsampled=True):
         if not os.path.exists(out_dir_ds):
             os.mkdir(out_dir_ds)
 
-        out_path_ds = os.path.join(out_dir_ds, pc_downsampled)
+        out_path_ds = os.path.join(out_dir_ds, f"Tile_{tile_id}.ply")
         
         o3d.t.io.write_point_cloud(out_path_ds, pc_downsampled)
     return
@@ -946,7 +952,17 @@ def main():
     else:
         out_dir = os.path.join(args.pointcloud_directory, "synthetic_tiles")
     
-    generate_tiles(args.mesh_directory, args.pointcloud_directory, out_dir, n_tiles=args.n_tiles)
+    # generate_tiles(args.mesh_directory, args.pointcloud_directory, out_dir, n_tiles=args.n_tiles)
+
+    trees = read_trees(args.mesh_directory, args.pointcloud_directory)
+
+    tile_cloud = generate_tile(trees)
+
+    print(tile_cloud.get_max_bound() - tile_cloud.get_min_bound())
+
+    tile_vec = Tensor2VecPC(tile_cloud)
+
+    o3d.visualization.draw_geometries([tile_vec])
 
     return
 
