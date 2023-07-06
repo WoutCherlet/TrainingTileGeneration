@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.spatial import ConvexHull, Delaunay
 from perlin_numpy import generate_fractal_noise_2d
+from scipy import interpolate
 
 
 DEBUG = False
@@ -27,6 +28,12 @@ SEMANTIC_MAP = {
     5: "tripod" # Tom's suggestion
 }
 
+
+POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
+
+# max size of plot
+NOISE_SIZE_X = 50
+NOISE_SIZE_Y = 50
 
 def read_trees(mesh_dir, pc_dir, alpha=None):
     device = o3d.core.Device("CPU:0")
@@ -495,41 +502,56 @@ def add_terrain_flat(plot_cloud, height=0.0, points_per_meter = 10):
 
     return terrain_cloud
 
-def add_terrain(plot_cloud, trunk_hulls, alphashapes):
-    # get dimension of plot cloud
-    max_x, max_y, _ = plot_cloud.get_max_bound().numpy()
-    min_x, min_y, _ = plot_cloud.get_min_bound().numpy()
 
-    POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
+def perlin_terrain():
+    nx = round(POINTS_PER_METER * NOISE_SIZE_X) + 1
+    ny = round(POINTS_PER_METER * NOISE_SIZE_Y) + 1
 
-    nx = round((max_x - min_x) * POINTS_PER_METER) + 1
-    ny = round((max_y - min_y) * POINTS_PER_METER) + 1
-
-    # constants for noise generation
-    # TODO: experiment with making these slightly random to get more extreme terrains
+    # perlin noise settings
     RES = 4
     LACUNARITY = 2
-    OCTAVES = 8
+    OCTAVES = 6
     PERSISTENCE = 0.4
-
-    # TODO: get perlin noise first and give tree height of noise at trunk location as estimate
-    # plan: generate 50 by 50 grid (if tile to large, write out to different folder to inspect and don't use)
-    # when placing initial bounding box of tree, get it's center location and use this to set its height
-    # could also detect likely direction, but probs not necessary
-
 
     # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
     shape_factor = RES*(LACUNARITY**(OCTAVES-1))
     perlin_nx = nx - (nx % shape_factor) + shape_factor
     perlin_ny = ny - (ny % shape_factor) + shape_factor
 
-    perlin_noise = generate_fractal_noise_2d((perlin_ny, perlin_nx), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY, persistence=PERSISTENCE)
-    perlin_noise = perlin_noise[:ny, :nx]
+    perlin_noise = generate_fractal_noise_2d((perlin_nx, perlin_ny), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY, persistence=PERSISTENCE)
+    perlin_noise = perlin_noise[:nx, :ny]
+
     SCALE = 2.5
     perlin_noise = perlin_noise * SCALE
 
+    x = np.linspace(0, NOISE_SIZE_X, num = nx)
+    y = np.linspace(0, NOISE_SIZE_Y, num = ny)
+    xv, yv = np.meshgrid(x, y)
+
+    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise)
+
+    points_xy = np.array([xv.flatten(), yv.flatten()]).T
+    z_arr = perlin_noise.T.flatten()
+    points_3d = np.column_stack((points_xy, z_arr))
+    
+    return perlin_noise, points_3d, interpolator
+
+
+def blend_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes):
+    # get dimension of plot cloud
+    max_x, max_y, _ = plot_cloud.get_max_bound().numpy()
+    min_x, min_y, _ = plot_cloud.get_min_bound().numpy()
+
+    # TODO: plot size check, if too big write to different folder to inspect
+
+    nx = round((max_x - min_x) * POINTS_PER_METER) + 1
+    ny = round((max_y - min_y) * POINTS_PER_METER) + 1
+
+    # cut perlin noise to size of plot
+    perlin_noise = perlin_noise[:nx, :ny]
+
     # get influence map and height map of trunks to adapt terrain to trunk heights and locations
-    influence_map, height_map = trunk_height_influence_map_convex_circle(min_x, min_y, ny, nx, POINTS_PER_METER, trunk_hulls=trunk_hulls)
+    influence_map, height_map = trunk_height_influence_map_convex_circle(min_x, min_y, nx, ny, POINTS_PER_METER, trunk_hulls=trunk_hulls)
     final_xy_map = influence_map * height_map + (np.ones(influence_map.shape, dtype=float) - influence_map) * perlin_noise
 
     # get xy grid
@@ -539,10 +561,9 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     
     # apply height map
     points_xy = np.array([xv.flatten(), yv.flatten()]).T
-    z_arr = final_xy_map.flatten()
+    z_arr = final_xy_map.T.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
 
-    
     # TODO: add terrain squares in perlin noise here
 
     points_3d_cleaned = remove_points_inside_alpha_shape(points_3d, alphashapes)
@@ -551,7 +572,6 @@ def add_terrain(plot_cloud, trunk_hulls, alphashapes):
     # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
     # plt.colorbar()
     # plt.show()
-
 
     # to pointcloud
     tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float32))
@@ -580,6 +600,9 @@ def influence_function_dist(distance, max_distance):
 
 def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_locations):
     # NOTE: don't use this, use convex hull function instead
+    
+    # NOTE: x and y are reversed here, deprecated
+    assert False, "x and y are still reversed in this function, change implementation first"
 
     # create trunk_locations map
     influence_map = np.zeros((ny, nx), dtype= float)
@@ -623,6 +646,9 @@ def trunk_height_influence_map(min_x, min_y, ny, nx, points_per_meter, trunk_loc
     return influence_map, height_map
 
 def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, trunk_hulls):
+    # NOTE: x and y are reversed here, deprecated
+    assert False, "x and y are still reversed in this function, change implementation first"
+
     # create trunk influence and height map
     influence_map = np.zeros((ny, nx), dtype= float)
     height_map = np.zeros((ny, nx), dtype=float)
@@ -686,13 +712,13 @@ def trunk_height_influence_map_convex(min_x, min_y, ny, nx, points_per_meter, tr
 
     return influence_map, height_map
 
-def trunk_height_influence_map_convex_circle(min_x, min_y, ny, nx, points_per_meter, trunk_hulls):
+def trunk_height_influence_map_convex_circle(min_x, min_y, nx, ny, points_per_meter, trunk_hulls):
     # create trunk influence and height map
-    influence_map = np.zeros((ny, nx), dtype= float)
-    height_map = np.zeros((ny, nx), dtype=float)
+    influence_map = np.zeros((nx, ny), dtype= float)
+    height_map = np.zeros((nx, ny), dtype=float)
 
     # used to keep track of influence of seen points on each points height, to do order independent weighted average
-    total_past_influence_map = np.zeros((ny, nx), dtype=float)
+    total_past_influence_map = np.zeros((nx, ny), dtype=float)
 
     for tree in trunk_hulls:
         hull_3d, _ = trunk_hulls[tree]
@@ -719,10 +745,10 @@ def trunk_height_influence_map_convex_circle(min_x, min_y, ny, nx, points_per_me
                         continue
                     
                     # height = weighted average between old height and current height, based on influence1
-                    height_map[y, x] = (total_past_influence_map[y, x]*height_map[y, x] + influence_factor*cur_height) / (total_past_influence_map[y, x] + influence_factor)
+                    height_map[x, y] = (total_past_influence_map[x, y]*height_map[x, y] + influence_factor*cur_height) / (total_past_influence_map[x, y] + influence_factor)
                     # influence = max of possible influences
-                    influence_map[y, x] = max(influence_factor, influence_map[y, x])
-                    total_past_influence_map[y, x] += influence_factor
+                    influence_map[x, y] = max(influence_factor, influence_map[x, y])
+                    total_past_influence_map[x, y] += influence_factor
     
     # temp: visualize
     # plt.matshow(influence_map, cmap='gray')
@@ -814,7 +840,7 @@ def terrain2mesh(terrain_cloud, decimation_factor = 5):
 def generate_tile(trees, debug=False):
     N_TREES = 9
 
-    # TODO: generate perlin noise here
+    terrain_noise, terrain_points_3d, terrain_interpolator = perlin_terrain()
 
     plot, transforms = assemble_trees_grid(trees, n_trees=N_TREES, debug=debug)
     
@@ -861,8 +887,7 @@ def generate_tile(trees, debug=False):
         continue
 
 
-    # TODO: now perlin noise is generated here, do it before assembling trees, then use this function to smooth out height maps
-    terrain_cloud = add_terrain(merged_cloud, trunk_hulls, alphashapes)
+    terrain_cloud = blend_terrain(merged_cloud, terrain_noise, trunk_hulls, alphashapes)
 
     if debug:
         terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
