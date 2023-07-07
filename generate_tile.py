@@ -32,8 +32,8 @@ SEMANTIC_MAP = {
 POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
 
 # max size of plot
-NOISE_SIZE_X = 50
-NOISE_SIZE_Y = 50
+NOISE_SIZE_X = 70
+NOISE_SIZE_Y = 70
 
 def read_trees(mesh_dir, pc_dir, alpha=None):
     device = o3d.core.Device("CPU:0")
@@ -88,6 +88,8 @@ def generate_random_tree_height(alpha=2, beta=2):
 
 
 def place_tree_in_line(name, tree_mesh, plot_mesh, collision_manager, trees):
+    assert False, "don't use anymore, only for debug"
+
     # start by placing tree at edge of plot
     translation = np.zeros((4,4), dtype=float)
 
@@ -148,6 +150,7 @@ def place_tree_in_line(name, tree_mesh, plot_mesh, collision_manager, trees):
     return plot_mesh, translation
 
 def assemble_trees_line(trees, n_trees=9):
+    assert False, "don't use anymore, only for debug"
     transforms = []
 
     trees_list = list(trees.keys())
@@ -192,6 +195,104 @@ def assemble_trees_line(trees, n_trees=9):
     
     return tri_mesh_plot
 
+
+def get_initial_tree_position(tree_mesh, max_x_row, max_y_plot):
+    # start by placing tree at edge of plot
+
+    min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
+
+    # maximal absolute height value
+    # TODO: set z_target based on noise value after placing tree at target x,y of bbox
+    z_target = generate_random_tree_height()
+
+    initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, z_target-min_z_tree])
+    bbox_transform = trimesh.transformations.translation_matrix(initial_translation)
+
+    # print(f"Placing {name} at height {z_target}")
+
+    tree_mesh.apply_transform(bbox_transform)
+
+    return tree_mesh, bbox_transform
+
+def move_tree_closer(name, tree_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, debug=False):
+
+    # move tree as close as possible to rest of plot
+    total_translation = np.array([0.0,0.0,0.0])
+    placed = False
+    if debug:
+        placed = True
+    distance_buffer = 0.05
+    i = 1
+    max_iterations = 100
+
+    while not placed:
+        # get distance of mesh to plot
+        if collision_manager_plot is not None:
+            min_distance_plot, closest_name_plot = collision_manager_plot.min_distance_single(tree_mesh, return_name=True)
+        else:
+            min_distance_plot = 1e9 # cant use inf because of mult with 0
+            closest_name_plot = None
+
+        # get distance of mesh to row
+        if max_x_row != 0:
+            min_distance_row, closest_name_row = collision_manager_row.min_distance_single(tree_mesh, return_name=True)
+        else:
+            min_distance_row = 1e9 # cant use inf because of mult with 0
+            closest_name_row = None
+
+        min_distance = min(min_distance_plot, min_distance_row)
+
+        if min_distance < distance_buffer:
+            print(f"placed after { i } iterations")
+            placed = True
+        else:
+            # move tree in direction of linear combination of closest bbox center of plot and row by min_distance with little buffer
+            bbox_xy_center_current = (tree_mesh.bounds[1][:2] + tree_mesh.bounds[0][:2]) / 2
+
+            if closest_name_plot is not None:
+                _, _, closest_tree_plot = trees[closest_name_plot]
+                bbox_xy_center_closest_plot = (closest_tree_plot.bounds[1][:2] - closest_tree_plot.bounds[0][:2]) / 2
+                direction_vector_plot = np.array(bbox_xy_center_closest_plot - bbox_xy_center_current)
+            else:
+                direction_vector_plot = np.array([0,0])
+
+            if closest_name_row is not None:
+                _, _, closest_tree_row= trees[closest_name_row]
+                bbox_xy_center_closest_row = (closest_tree_row.bounds[1][:2] - closest_tree_row.bounds[0][:2]) / 2
+                direction_vector_row = np.array(bbox_xy_center_closest_row - bbox_xy_center_current)
+            else:
+                direction_vector_row = np.array([0,0])
+                
+            # weighted by closest distance
+            direction_vector = min_distance_plot**2 * direction_vector_plot + min_distance_row * direction_vector_row
+            unit_vector = direction_vector / np.linalg.norm(direction_vector)
+
+            # add noise to x and y and renormalize
+            noisy_vector = [unit_vector[0] + random.uniform(-0.5, 0.5), unit_vector[1] + random.uniform(-0.5, 0.5)]
+            noisy_unit_vector = noisy_vector / np.linalg.norm(noisy_vector)
+
+            trans_distance = min_distance - distance_buffer / 2
+
+            trans = [noisy_unit_vector[0]*trans_distance, noisy_unit_vector[1]*trans_distance, 0]
+
+            bbox_transform = trimesh.transformations.translation_matrix(trans)
+            tree_mesh.apply_transform(bbox_transform)
+            total_translation += trans
+        
+        if i >= max_iterations:
+            print(f"placed after max iterations { max_iterations}")
+            placed = True
+        
+        i += 1
+
+    max_x_row = tree_mesh.bounds[1][0]
+    collision_manager_row.add_object(name, tree_mesh)
+
+    translation_matrix = trimesh.transformations.translation_matrix(total_translation)
+
+    return tree_mesh, translation_matrix, max_x_row
+
+
 def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, max_y_plot, debug=False):
     # start by placing tree at edge of plot
     total_translation = np.array([0.0,0.0,0.0])
@@ -199,7 +300,6 @@ def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manage
     min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
 
     # maximal absolute height value
-    # TODO: set z_target based on noise value after placing tree at target x,y of bbox
     z_target = generate_random_tree_height()
 
     initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, z_target-min_z_tree])
@@ -359,12 +459,17 @@ def assemble_trees_grid(trees, n_trees=9, debug=False):
             
             print(f"Placing tree {name}")
             
-            tree_mesh, translation, max_x_row = place_tree_in_grid(name, tri_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, max_y_plot, debug=debug)
+            tree_mesh, initial_translation = get_initial_tree_position(tri_mesh, max_x_row, max_y_plot)
+
+            tree_mesh, second_translation, max_x_row = move_tree_closer(name, tree_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, debug=debug)
+
+            # tree_mesh, translation, max_x_row = place_tree_in_grid(name, tri_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, max_y_plot, debug=debug)
             collision_meshes[name] = tree_mesh
             tri_mesh_plot += tree_mesh
             if debug:
                 tri_mesh_plot += tree_mesh.bounding_box
-            o3d_transform = np.matmul(translation, o3d_transform)
+            o3d_transform = np.matmul(initial_translation, o3d_transform)
+            o3d_transform = np.matmul(second_translation, o3d_transform)
 
         # save_transforms
         transforms[name] = o3d_transform
@@ -818,9 +923,6 @@ def remove_points_inside_alpha_shape(points, alphashapes):
 
 
 def terrain2mesh(terrain_cloud, decimation_factor = 5):
-
-    # TODO: fix warnings
-
     tri = Delaunay(terrain_cloud.point.positions.numpy()[:,:2])
 
     terrain_mesh = o3d.t.geometry.TriangleMesh(vertex_positions=terrain_cloud.point.positions, triangle_indices=o3d.core.Tensor(tri.simplices))
