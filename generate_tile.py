@@ -196,23 +196,48 @@ def assemble_trees_line(trees, n_trees=9):
     return tri_mesh_plot
 
 
-def get_initial_tree_position(tree_mesh, max_x_row, max_y_plot):
+# TODO: following 2 functions replace place_tree_in_grid, can remove completely if sure it works
+
+def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_plot):
     # start by placing tree at edge of plot
 
     min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
 
-    # maximal absolute height value
-    # TODO: set z_target based on noise value after placing tree at target x,y of bbox
-    z_target = generate_random_tree_height()
+    # TODO: huge problem: the bounds are not the same????
+    # TODO: fix this, it's because when not debug trimesh is rotated at random I think
+    print(tree_mesh.bounds)
+    print(pointcloud.get_min_bound(), pointcloud.get_max_bound())
 
-    initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, z_target-min_z_tree])
+    
+    initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, -min_z_tree])
     bbox_transform = trimesh.transformations.translation_matrix(initial_translation)
 
-    # print(f"Placing {name} at height {z_target}")
+    inverse_bbox_transform = trimesh.transformations.translation_matrix(-initial_translation)
 
-    tree_mesh.apply_transform(bbox_transform)
+    pointcloud = pointcloud.transform(bbox_transform)
 
-    return tree_mesh, bbox_transform
+    # set height based on local noise value
+    trunk_center_x, trunk_center_y, _ = get_trunk_location(pointcloud)
+
+    print(max_x_row, max_y_plot)
+    print(trunk_center_x, trunk_center_y)
+
+    # do the inverse transform after getting the correct location, because transform is in place
+    # this seems a little weird, but in our workflow the transforms are all saved and then applied so this might fuck something up # TODO: fix this mess? apply transforms in assemble_grid function is possible, but I kinda like this workflow
+    pointcloud = pointcloud.transform(inverse_bbox_transform)
+
+    noise_idx_x = round(POINTS_PER_METER * trunk_center_x)
+    noise_idx_y = round(POINTS_PER_METER * trunk_center_y)
+    z_target = noise_2d[noise_idx_x][noise_idx_y]
+
+
+    height_translation = np.array([0, 0, z_target])
+
+    total_transform = trimesh.transformations.translation_matrix(initial_translation + height_translation)
+
+    tree_mesh.apply_transform(total_transform)
+
+    return tree_mesh, total_transform
 
 def move_tree_closer(name, tree_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, debug=False):
 
@@ -385,8 +410,8 @@ def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manage
 
     return tree_mesh, translation_matrix, max_x_row
 
-def assemble_trees_grid(trees, n_trees=9, debug=False):
-
+def assemble_trees_grid(trees, terrain_noise, n_trees=9, debug=False):
+    debug=True
     if debug:
         print("Debug is True, going through trees in order, not rotating and placing at bbox edge + drawing bboxs")
 
@@ -406,7 +431,7 @@ def assemble_trees_grid(trees, n_trees=9, debug=False):
             name = random.choice(trees_list)
             trees_list.remove(name)
         
-        _, _, tri_mesh = trees[name]
+        pc, _, tri_mesh = trees[name]
 
         # save all transforms for this tree to single matrix
         o3d_transform = np.identity(4, dtype=float)
@@ -459,7 +484,7 @@ def assemble_trees_grid(trees, n_trees=9, debug=False):
             
             print(f"Placing tree {name}")
             
-            tree_mesh, initial_translation = get_initial_tree_position(tri_mesh, max_x_row, max_y_plot)
+            tree_mesh, initial_translation = get_initial_tree_position(tri_mesh, pc, terrain_noise, max_x_row, max_y_plot)
 
             tree_mesh, second_translation, max_x_row = move_tree_closer(name, tree_mesh, collision_manager_plot, collision_manager_row, trees, max_x_row, debug=debug)
 
@@ -483,17 +508,17 @@ def get_trunk_location(pointcloud):
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
 
     # slice bottom meter of bounding box
-    min_bound_bbox = aaligned_bbox.get_min_bound()
-    max_bound_bbox = aaligned_bbox.get_max_bound()
+    min_bound_bbox = aaligned_bbox.min_bound
+    max_bound_bbox = aaligned_bbox.max_bound
     max_bound_bbox[2] = min_bound_bbox[2] + 1
-    aaligned_bbox.max_bound = max_bound_bbox
+    aaligned_bbox.set_max_bound(max_bound_bbox)
 
     # crop pointcloud to bottom bbox
     cropped_pointcloud = pointcloud.crop(aaligned_bbox)
 
     cropped_bbox = cropped_pointcloud.get_axis_aligned_bounding_box()
 
-    center_x, center_y = cropped_bbox.get_center()[:2]
+    center_x, center_y = cropped_bbox.get_center().numpy()[:2]
     # Temporary: get convex hull center
     return [center_x, center_y, min_bound_bbox[2]]
 
@@ -519,6 +544,9 @@ def get_trunk_convex_hull(pointcloud, slice_height=0.75):
     return hull_points_3d, hull
 
 def get_trunk_alpha_shape(pointcloud, name, slice_height=0.75):
+    # TODO: set this in better way, keep for now cause anoying as hell
+    debug = False
+
     # get axis aligned bounding box
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
 
@@ -541,17 +569,21 @@ def get_trunk_alpha_shape(pointcloud, name, slice_height=0.75):
     # check if alphashape area is not inside tree by checking that area is large enough + check if not split up
     # if so, decrease alpha
     bbox_area = np.prod(np.amax(points_projected_2d, axis=0) - np.amin(points_projected_2d, axis=0))
-    while isinstance(alpha_shape, shapely.MultiPolygon) or alpha_shape.area < 0.5*bbox_area:
+    while isinstance(alpha_shape, shapely.MultiPolygon) or alpha_shape.area < 0.4*bbox_area:
         ALPHA -= 1
         if ALPHA <= 0:
             if not second_try:
                 print(f"Problem: got to alpha is 0, alphashape package hangs in this case, for pc {name}")
-                print(f"Trying again with double the slice_height")
-                if not isinstance(alpha_shape, shapely.MultiPolygon) and DEBUG:
+                
+                if debug:
                     fig, ax = plt.subplots()
                     ax.scatter(*zip(*points_projected_2d))
-                    x,y = alpha_shape.exterior.xy
-                    plt.plot(x,y)
+                    if not isinstance(alpha_shape, shapely.MultiPolygon):
+                        x,y = alpha_shape.exterior.xy
+                        plt.plot(x,y)
+                    else:
+                        for geom in alpha_shape.geoms:
+                            plt.plot(*geom.exterior.xy)
                     plt.show()
                 ALPHA = 10.0
                 max_bound_bbox[2] = min_bound_bbox[2] + slice_height*2
@@ -562,22 +594,23 @@ def get_trunk_alpha_shape(pointcloud, name, slice_height=0.75):
                 second_try = True
             else:
                 print(f"Bigger problem: got to alpha is 0 on second try for pc {name}")
-                fig, ax = plt.subplots()
-                ax.scatter(*zip(*points_projected_2d))
-                x,y = alpha_shape.exterior.xy
-                plt.plot(x,y)
-                plt.show()
+                print("Just accepting what we have now")
                 break
 
 
         alpha_shape = alphashape.alphashape(points_projected_2d, ALPHA)
 
     # temp: plot alpha shape
-    if second_try and DEBUG:
+    if second_try and debug:
+        print("Plotting after second try")
         fig, ax = plt.subplots()
         ax.scatter(*zip(*points_projected_2d))
-        x,y = alpha_shape.exterior.xy
-        plt.plot(x,y)
+        if not isinstance(alpha_shape, shapely.MultiPolygon):
+            x,y = alpha_shape.exterior.xy
+            plt.plot(x,y)
+        else:
+            for geom in alpha_shape.geoms:
+                plt.plot(*geom.exterior.xy)
         plt.show()
 
     return alpha_shape
@@ -939,12 +972,12 @@ def terrain2mesh(terrain_cloud, decimation_factor = 5):
 
 
 
-def generate_tile(trees, debug=False):
+def generate_tile(trees, debug=DEBUG):
     N_TREES = 9
 
     terrain_noise, terrain_points_3d, terrain_interpolator = perlin_terrain()
 
-    plot, transforms = assemble_trees_grid(trees, n_trees=N_TREES, debug=debug)
+    plot, transforms = assemble_trees_grid(trees, terrain_noise, n_trees=N_TREES, debug=debug)
     
     # apply derived transforms to pointcloud and get trunk locations
     merged_cloud = None
@@ -988,14 +1021,18 @@ def generate_tile(trees, debug=False):
                 merged_plot_debug += Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(cur_instance_id-2) % n_colors])
         continue
 
+    if debug:
+        plot.show()
+        o3d.visualization.draw_geometries([merged_plot_debug])
 
+
+    # after placing all trees, merge perlin terrain with trees using hulls and overlay real terrain tiles
     terrain_cloud = blend_terrain(merged_cloud, terrain_noise, trunk_hulls, alphashapes)
 
     if debug:
         terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
         terrain_cloud_debug.paint_uniform_color([0.75,0.75,0.75])
 
-    # plot.show()
     
 
     if debug:
@@ -1041,7 +1078,7 @@ def generate_tiles(mesh_dir, pc_dir, out_dir, alpha=None, n_tiles=10):
     for i in range(n_tiles):
 
         start_time = time.process_time()
-        tile_cloud = generate_tile(trees, debug=DEBUG)
+        tile_cloud = generate_tile(trees)
         end_time = time.process_time()
         print(f"Generated tile {i+1} in {end_time-start_time} seconds")
 
