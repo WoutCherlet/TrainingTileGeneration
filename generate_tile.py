@@ -11,13 +11,13 @@ import trimesh
 import alphashape
 import shapely
 import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy.spatial import ConvexHull, Delaunay
+from scipy.spatial import ConvexHull
 from perlin_numpy import generate_fractal_noise_2d
 from scipy import interpolate
 
 
 DEBUG = False
+DEBUG_ALPHA_SHAPES = False
 
 SEMANTIC_MAP = {
     0: "terrain",
@@ -28,12 +28,19 @@ SEMANTIC_MAP = {
     5: "tripod" # Tom's suggestion
 }
 
-
 POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
 
 # max size of plot
-NOISE_SIZE_X = 70
-NOISE_SIZE_Y = 70
+MAX_SIZE_X = 60
+MAX_SIZE_Y = 60
+
+
+def Tensor2VecPC(pointcloud):
+    if not isinstance(pointcloud, o3d.t.geometry.PointCloud):
+        print(f"Not the right type of pointcloud: {pointcloud}")
+        return None
+    return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pointcloud.point.positions.numpy()))
+
 
 def read_trees(mesh_dir, pc_dir, alpha=None):
     device = o3d.core.Device("CPU:0")
@@ -60,14 +67,7 @@ def read_trees(mesh_dir, pc_dir, alpha=None):
         trees[name] = (pc, o3d_mesh, tri_mesh)
     return trees
 
-def Tensor2VecPC(pointcloud):
-    if not isinstance(pointcloud, o3d.t.geometry.PointCloud):
-        print(f"Not the right type of pointcloud: {pointcloud}")
-        return None
-    return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pointcloud.point.positions.numpy()))
 
-
-# TODO: following 2 functions replace place_tree_in_grid, can remove completely if sure it works
 
 def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_plot):
     # start by placing tree at edge of plot
@@ -311,8 +311,7 @@ def get_trunk_convex_hull(pointcloud, slice_height=0.75):
     return hull_points_3d, hull
 
 def get_trunk_alpha_shape(pointcloud, name, slice_height=0.75):
-    # TODO: set this in better way, keep for now cause anoying as hell
-    debug = False
+    debug = DEBUG_ALPHA_SHAPES
 
     # get axis aligned bounding box
     aaligned_bbox = pointcloud.get_axis_aligned_bounding_box()
@@ -417,51 +416,6 @@ def perlin_terrain():
     
     return perlin_noise, points_3d, interpolator
 
-def blend_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes):
-    # get dimension of plot cloud
-    max_x, max_y, _ = plot_cloud.get_max_bound().numpy()
-    min_x, min_y, _ = plot_cloud.get_min_bound().numpy()
-
-    # TODO: plot size check, if too big write to different folder to inspect
-
-    nx = round((max_x - min_x) * POINTS_PER_METER) + 1
-    ny = round((max_y - min_y) * POINTS_PER_METER) + 1
-
-    # cut perlin noise to size of plot
-    perlin_noise = perlin_noise[:nx, :ny]
-
-    # get influence map and height map of trunks to adapt terrain to trunk heights and locations
-    influence_map, height_map = trunk_height_influence_map_convex_circle(min_x, min_y, nx, ny, POINTS_PER_METER, trunk_hulls=trunk_hulls)
-    final_xy_map = influence_map * height_map + (np.ones(influence_map.shape, dtype=float) - influence_map) * perlin_noise
-
-    # get xy grid
-    x = np.linspace(min_x, max_x, num = nx)
-    y = np.linspace(min_y, max_y, num = ny)
-    xv, yv = np.meshgrid(x, y)
-    
-    # apply height map
-    points_xy = np.array([xv.flatten(), yv.flatten()]).T
-    z_arr = final_xy_map.T.flatten()
-    points_3d = np.column_stack((points_xy, z_arr))
-
-    # TODO: add terrain squares in perlin noise here
-
-    points_3d_cleaned = remove_points_inside_alpha_shape(points_3d, alphashapes)
-
-    # visualization
-    # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
-    # plt.colorbar()
-    # plt.show()
-
-    # to pointcloud
-    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float32))
-    terrain_cloud = o3d.t.geometry.PointCloud()
-    terrain_cloud.point.positions = tensor_3d
-    # add labels to terrain cloud: semantic terrain label is 0, no instance so -1
-    terrain_cloud.point.semantic = o3d.core.Tensor(np.zeros(len(points_3d_cleaned), dtype=np.int32)[:,None])
-    terrain_cloud.point.instance = o3d.core.Tensor((-1)*np.ones(len(points_3d_cleaned), dtype=np.int32)[:,None])
-
-    return terrain_cloud
 
 
 def influence_function_dist(distance, max_distance):
@@ -515,7 +469,6 @@ def trunk_height_influence_map_convex_circle(min_x, min_y, nx, ny, points_per_me
 
     return influence_map, height_map
 
-
 def points_in_alphashape(points, alphashape):
     mask = []
     for point in points:
@@ -546,6 +499,50 @@ def remove_points_inside_alpha_shape(points, alphashapes):
 
     return points
 
+
+def blend_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes):
+    # get dimension of plot cloud
+    max_x, max_y, _ = plot_cloud.get_max_bound().numpy()
+    min_x, min_y, _ = plot_cloud.get_min_bound().numpy()
+
+    nx = round((max_x - min_x) * POINTS_PER_METER) + 1
+    ny = round((max_y - min_y) * POINTS_PER_METER) + 1
+
+    # cut perlin noise to size of plot
+    perlin_noise = perlin_noise[:nx, :ny]
+
+    # get influence map and height map of trunks to adapt terrain to trunk heights and locations
+    influence_map, height_map = trunk_height_influence_map_convex_circle(min_x, min_y, nx, ny, POINTS_PER_METER, trunk_hulls=trunk_hulls)
+    final_xy_map = influence_map * height_map + (np.ones(influence_map.shape, dtype=float) - influence_map) * perlin_noise
+
+    # get xy grid
+    x = np.linspace(min_x, max_x, num = nx)
+    y = np.linspace(min_y, max_y, num = ny)
+    xv, yv = np.meshgrid(x, y)
+    
+    # apply height map
+    points_xy = np.array([xv.flatten(), yv.flatten()]).T
+    z_arr = final_xy_map.T.flatten()
+    points_3d = np.column_stack((points_xy, z_arr))
+
+    # TODO: add terrain squares in perlin noise here
+
+    points_3d_cleaned = remove_points_inside_alpha_shape(points_3d, alphashapes)
+
+    # visualization
+    # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
+    # plt.colorbar()
+    # plt.show()
+
+    # to pointcloud
+    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float32))
+    terrain_cloud = o3d.t.geometry.PointCloud()
+    terrain_cloud.point.positions = tensor_3d
+    # add labels to terrain cloud: semantic terrain label is 0, no instance so -1
+    terrain_cloud.point.semantic = o3d.core.Tensor(np.zeros(len(points_3d_cleaned), dtype=np.int32)[:,None])
+    terrain_cloud.point.instance = o3d.core.Tensor((-1)*np.ones(len(points_3d_cleaned), dtype=np.int32)[:,None])
+
+    return terrain_cloud
 
 
 
@@ -591,24 +588,25 @@ def generate_tile(trees, debug=DEBUG):
     cmap = plt.get_cmap("Set1")
     n_colors = len(cmap.colors)
 
+
+    # apply transforms to open3d and merge
     for name in transforms:
-        # apply transforms to open3d and merge
 
         pc, _, _ = trees[name]
         transform = transforms[name]
         # transform_tensor = o3d.core.Tensor(transform)
         pc = pc.transform(transform)
 
-        
-        # add labels to terrain cloud: semantic trees label is 1, unique instance label per tree
+        # add labels to cloud: semantic trees label is 1, unique instance label per tree
         pc.point.semantic = o3d.core.Tensor(np.ones(len(pc.point.positions), dtype=np.int32)[:,None])
         pc.point.instance = o3d.core.Tensor(cur_instance_id*np.ones(len(pc.point.positions), dtype=np.int32)[:,None])
         cur_instance_id += 1
 
+        # get hull and alpha_shape of pc in merged cloud
         trunk_hulls[name] = get_trunk_convex_hull(pc)
         alphashapes[name] = get_trunk_alpha_shape(pc, name)
 
-        # ugly code but for some reason o3d errors when appending to empty pointcloud
+        # append point cloud
         if merged_cloud is None:
             if debug:
                 merged_plot_debug = Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(cur_instance_id-2) % n_colors])
@@ -618,12 +616,18 @@ def generate_tile(trees, debug=DEBUG):
             merged_cloud += pc
             if debug:
                 merged_plot_debug += Tensor2VecPC(pc).paint_uniform_color(cmap.colors[(cur_instance_id-2) % n_colors])
-        continue
+        
+
+    x_size, y_size, _ = merged_cloud.get_max_bound().numpy() - merged_cloud.get_min_bound().numpy()
+
+    if x_size > MAX_SIZE_X or y_size > MAX_SIZE_Y:
+        print(f"Generated plot is too big ({x_size}, {y_size}), writing downsampled version to seperate folder and returning")
+        merged_cloud = merged_cloud.voxel_down_sample(voxel_size=0.05)
+        return merged_cloud, False
 
     if debug:
         plot.show()
         o3d.visualization.draw_geometries([merged_plot_debug])
-
 
     # after placing all trees, merge perlin terrain with trees using hulls and overlay real terrain tiles
     terrain_cloud = blend_terrain(merged_cloud, terrain_noise, trunk_hulls, alphashapes)
@@ -631,15 +635,13 @@ def generate_tile(trees, debug=DEBUG):
     if debug:
         terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
         terrain_cloud_debug.paint_uniform_color([0.75,0.75,0.75])
-
     
-
     if debug:
         o3d.visualization.draw_geometries([merged_plot_debug, terrain_cloud_debug])
 
     merged_cloud += terrain_cloud
 
-    return merged_cloud
+    return merged_cloud, True
 
 def generate_tiles(mesh_dir, pc_dir, out_dir, alpha=None, n_tiles=10):
     # read trees
@@ -651,11 +653,13 @@ def generate_tiles(mesh_dir, pc_dir, out_dir, alpha=None, n_tiles=10):
     for i in range(n_tiles):
 
         start_time = time.process_time()
-        tile_cloud = generate_tile(trees)
+        tile_cloud, tile_ok = generate_tile(trees)
         end_time = time.process_time()
         print(f"Generated tile {i+1} in {end_time-start_time} seconds")
-
-        save_tile(out_dir, tile_cloud, i+1)
+        if tile_ok:
+            save_tile(out_dir, tile_cloud, i+1)
+        else:
+            save_tile(os.path.join(out_dir, "too_large_debug"), tile_cloud, i+1, downsampled=False)
     return
 
 
