@@ -203,12 +203,6 @@ def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_
 
     min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
 
-    # TODO: huge problem: the bounds are not the same????
-    # TODO: fix this, it's because when not debug trimesh is rotated at random I think
-    print(tree_mesh.bounds)
-    print(pointcloud.get_min_bound(), pointcloud.get_max_bound())
-
-    
     initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, -min_z_tree])
     bbox_transform = trimesh.transformations.translation_matrix(initial_translation)
 
@@ -218,9 +212,6 @@ def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_
 
     # set height based on local noise value
     trunk_center_x, trunk_center_y, _ = get_trunk_location(pointcloud)
-
-    print(max_x_row, max_y_plot)
-    print(trunk_center_x, trunk_center_y)
 
     # do the inverse transform after getting the correct location, because transform is in place
     # this seems a little weird, but in our workflow the transforms are all saved and then applied so this might fuck something up # TODO: fix this mess? apply transforms in assemble_grid function is possible, but I kinda like this workflow
@@ -411,7 +402,6 @@ def place_tree_in_grid(name, tree_mesh, collision_manager_plot, collision_manage
     return tree_mesh, translation_matrix, max_x_row
 
 def assemble_trees_grid(trees, terrain_noise, n_trees=9, debug=False):
-    debug=True
     if debug:
         print("Debug is True, going through trees in order, not rotating and placing at bbox edge + drawing bboxs")
 
@@ -443,7 +433,8 @@ def assemble_trees_grid(trees, terrain_noise, n_trees=9, debug=False):
             rot_matrix[:2,:2] = [[m.cos(rot_angle), -m.sin(rot_angle)], [m.sin(rot_angle),m.cos(rot_angle)]]
 
             # save rotation and apply to trimesh mesh
-            o3d_transform = np.matmul(rot_matrix, o3d_transform)
+            # o3d_transform = np.matmul(rot_matrix, o3d_transform)
+            pc = pc.transform(rot_matrix)
             tri_mesh.apply_transform(rot_matrix)
 
 
