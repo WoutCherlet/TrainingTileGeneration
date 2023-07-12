@@ -15,6 +15,8 @@ from scipy.spatial import ConvexHull
 from perlin_numpy import generate_fractal_noise_2d
 from scipy import interpolate
 
+from preprocess_terrain import overlay_terrain
+
 
 DEBUG = False
 DEBUG_ALPHA_SHAPES = False
@@ -29,7 +31,8 @@ SEMANTIC_MAP = {
 }
 
 POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
-
+GRID_SIZE = 1
+TREES_PER_PLOT = 1 # NOTE: slight variations in this to get different amount of instances per plot?
 # max size of plot
 MAX_SIZE_X = 60
 MAX_SIZE_Y = 60
@@ -43,8 +46,6 @@ def Tensor2VecPC(pointcloud):
 
 
 def read_trees(mesh_dir, pc_dir, alpha=None):
-    device = o3d.core.Device("CPU:0")
-    dtype = o3d.core.float32
 
     trees = {}
     for file in sorted(glob.glob(os.path.join(pc_dir, "*.ply"))):
@@ -67,6 +68,13 @@ def read_trees(mesh_dir, pc_dir, alpha=None):
         trees[name] = (pc, o3d_mesh, tri_mesh)
     return trees
 
+def read_terrain_tiles(tile_dir):
+    terrain_tiles = []
+    for file in sorted(glob.glob(os.path.join(tile_dir, "*.ply"))):
+        pc = o3d.io.read_point_cloud(file)
+        terrain_tiles.append(pc)
+    
+    return terrain_tiles
 
 
 def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_plot):
@@ -85,7 +93,8 @@ def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_
     trunk_center_x, trunk_center_y, _ = get_trunk_location(pointcloud)
 
     # do the inverse transform after getting the correct location, because transform is in place
-    # this seems a little weird, but in our workflow the transforms are all saved and then applied so this might fuck something up # TODO: fix this mess? apply transforms in assemble_grid function is possible, but I kinda like this workflow
+    # this seems a little weird, but in our workflow the transforms are all saved
+    # NOTE: possible to change up workflow and apply transforms directly, but this works fine
     pointcloud = pointcloud.transform(inverse_bbox_transform)
 
     noise_idx_x = round(POINTS_PER_METER * trunk_center_x)
@@ -384,8 +393,8 @@ def get_trunk_alpha_shape(pointcloud, name, slice_height=0.75):
 
 
 def perlin_terrain():
-    nx = round(POINTS_PER_METER * NOISE_SIZE_X) + 1
-    ny = round(POINTS_PER_METER * NOISE_SIZE_Y) + 1
+    nx = round(POINTS_PER_METER * MAX_SIZE_X) + 1
+    ny = round(POINTS_PER_METER * MAX_SIZE_Y) + 1
 
     # perlin noise settings
     RES = 4
@@ -403,18 +412,8 @@ def perlin_terrain():
 
     SCALE = 2.5
     perlin_noise = perlin_noise * SCALE
-
-    x = np.linspace(0, NOISE_SIZE_X, num = nx)
-    y = np.linspace(0, NOISE_SIZE_Y, num = ny)
-    xv, yv = np.meshgrid(x, y)
-
-    interpolator = interpolate.RegularGridInterpolator((x,y), perlin_noise)
-
-    points_xy = np.array([xv.flatten(), yv.flatten()]).T
-    z_arr = perlin_noise.T.flatten()
-    points_3d = np.column_stack((points_xy, z_arr))
     
-    return perlin_noise, points_3d, interpolator
+    return perlin_noise
 
 
 
@@ -500,7 +499,7 @@ def remove_points_inside_alpha_shape(points, alphashapes):
     return points
 
 
-def blend_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes):
+def build_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes, terrain_tiles):
     # get dimension of plot cloud
     max_x, max_y, _ = plot_cloud.get_max_bound().numpy()
     min_x, min_y, _ = plot_cloud.get_min_bound().numpy()
@@ -511,9 +510,15 @@ def blend_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes):
     # cut perlin noise to size of plot
     perlin_noise = perlin_noise[:nx, :ny]
 
+    print("Blending noise with trunk height map")
     # get influence map and height map of trunks to adapt terrain to trunk heights and locations
     influence_map, height_map = trunk_height_influence_map_convex_circle(min_x, min_y, nx, ny, POINTS_PER_METER, trunk_hulls=trunk_hulls)
     final_xy_map = influence_map * height_map + (np.ones(influence_map.shape, dtype=float) - influence_map) * perlin_noise
+
+    # visualization
+    # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
+    # plt.colorbar()
+    # plt.show()
 
     # get xy grid
     x = np.linspace(min_x, max_x, num = nx)
@@ -525,14 +530,14 @@ def blend_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes):
     z_arr = final_xy_map.T.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
 
-    # TODO: add terrain squares in perlin noise here
+    interpolator = interpolate.RegularGridInterpolator((x,y), final_xy_map)
 
-    points_3d_cleaned = remove_points_inside_alpha_shape(points_3d, alphashapes)
+    print("Overlaying real terrain tiles")
+    merged_terrain_cloud = overlay_terrain(final_xy_map, points_3d, interpolator, terrain_tiles)
+    points_3d_real = np.asarray(merged_terrain_cloud.points)
 
-    # visualization
-    # plt.matshow(final_xy_map, cmap='gray', interpolation='lanczos')
-    # plt.colorbar()
-    # plt.show()
+    print("Removing terrain inside tree trunks")
+    points_3d_cleaned = remove_points_inside_alpha_shape(points_3d_real, alphashapes)
 
     # to pointcloud
     tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float32))
@@ -568,12 +573,11 @@ def save_tile(out_dir, out_pc, tile_id, downsampled=True):
         o3d.t.io.write_point_cloud(out_path_ds, pc_downsampled)
     return
 
-def generate_tile(trees, debug=DEBUG):
-    N_TREES = 9
+def generate_tile(trees, terrain_tiles, debug=DEBUG):
 
-    terrain_noise, terrain_points_3d, terrain_interpolator = perlin_terrain()
+    terrain_noise = perlin_terrain()
 
-    plot, transforms = assemble_trees_grid(trees, terrain_noise, n_trees=N_TREES, debug=debug)
+    plot, transforms = assemble_trees_grid(trees, terrain_noise, n_trees=TREES_PER_PLOT, debug=debug)
     
     # apply derived transforms to pointcloud and get trunk locations
     merged_cloud = None
@@ -629,8 +633,9 @@ def generate_tile(trees, debug=DEBUG):
         plot.show()
         o3d.visualization.draw_geometries([merged_plot_debug])
 
-    # after placing all trees, merge perlin terrain with trees using hulls and overlay real terrain tiles
-    terrain_cloud = blend_terrain(merged_cloud, terrain_noise, trunk_hulls, alphashapes)
+    # after placing all trees, merge perlin terrain with trees using hulls
+    terrain_cloud = build_terrain(merged_cloud, terrain_noise, trunk_hulls, alphashapes, terrain_tiles)
+
 
     if debug:
         terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
@@ -643,9 +648,12 @@ def generate_tile(trees, debug=DEBUG):
 
     return merged_cloud, True
 
-def generate_tiles(mesh_dir, pc_dir, out_dir, alpha=None, n_tiles=10):
+def generate_tiles(mesh_dir, pc_dir, tiles_dir, out_dir, alpha=None, n_tiles=10):
     # read trees
     trees = read_trees(mesh_dir, pc_dir, alpha=alpha)
+
+    # TODO: expand to cuttable and non_cuttable
+    terrain_tiles = read_terrain_tiles(tiles_dir)
 
     print(f"Read {len(trees)} trees")
 
@@ -653,7 +661,7 @@ def generate_tiles(mesh_dir, pc_dir, out_dir, alpha=None, n_tiles=10):
     for i in range(n_tiles):
 
         start_time = time.process_time()
-        tile_cloud, tile_ok = generate_tile(trees)
+        tile_cloud, tile_ok = generate_tile(trees, terrain_tiles)
         end_time = time.process_time()
         print(f"Generated tile {i+1} in {end_time-start_time} seconds")
         if tile_ok:
@@ -666,6 +674,7 @@ def generate_tiles(mesh_dir, pc_dir, out_dir, alpha=None, n_tiles=10):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-p", "--pointcloud_directory", required=True)
+    parser.add_argument("-t", "--tile_directory", required=True)
     parser.add_argument("-d", "--mesh_directory", default=None)
     parser.add_argument("-o", "--output_directory", default=None)
     parser.add_argument("-n", "--n_tiles", default=10)
@@ -673,8 +682,13 @@ def main():
     args = parser.parse_args()
 
     if not os.path.exists(args.pointcloud_directory):
-        print(f"Couldn't read input dir {args.pointcloud_directory}!")
+        print(f"Couldn't read trees input dir {args.pointcloud_directory}!")
         return
+    
+    if not os.path.exists(args.tile_directory):
+        print(f"Couldn't read tile input dir {args.tile_directory}!")
+        return
+
     
     if args.mesh_directory is None:
         if not os.path.exists(os.path.join(args.pointcloud_directory, "alpha_complexes")):
@@ -691,11 +705,12 @@ def main():
     else:
         out_dir = os.path.join(args.pointcloud_directory, "synthetic_tiles")
     
-    # generate_tiles(args.mesh_directory, args.pointcloud_directory, out_dir, n_tiles=args.n_tiles)
+    # generate_tiles(args.mesh_directory, args.pointcloud_directory, args.tile_directory, out_dir, n_tiles=args.n_tiles)
 
     trees = read_trees(args.mesh_directory, args.pointcloud_directory)
+    terrain_tiles = read_terrain_tiles(args.tile_directory)
 
-    tile_cloud = generate_tile(trees)
+    tile_cloud, _ = generate_tile(trees, terrain_tiles)
 
     print(tile_cloud.get_max_bound() - tile_cloud.get_min_bound())
 

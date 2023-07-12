@@ -122,6 +122,8 @@ def generate_perlin_noise():
 
     # better: just use known decent settings for big size and then crop
 
+    # TODO: finalize good settings
+
     SCALE = 2.5
     perlin_noise_crop = perlin_noise_crop * SCALE
 
@@ -292,7 +294,8 @@ def get_closest_lowest(bins_lowest, i, j, point):
             return bins_lowest[closest_xy[0]][closest_xy[1]]
         index_offset += 1
 
-def overlay_noise(terrain_tile, noise_tile, interpolator):
+
+def overlay_single_tile(terrain_tile, noise_tile, interpolator):
     STEP_SIZE = 0.01
     bottom_pc, top_pc, bins, bins_lowest = extract_lowest_alt(terrain_tile, step_size=STEP_SIZE)
 
@@ -346,8 +349,8 @@ def overlay_noise(terrain_tile, noise_tile, interpolator):
 
     return noise_cloud, corrected_cloud
 
-
-def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
+# TODO: preprocess common operations in overlay_single_tile when number of tiles is larger then total number of terrain tiles
+def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
 
     # get dimensions of noise terrain to fill up
     pptile = GRID_SIZE*POINTS_PER_METER
@@ -370,6 +373,8 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
     # ctr = vis.get_view_control() # TODO: if we can fix this, it's a nice visualization
     # ctr.rotate(50.0, 0.0)
     # vis.add_geometry(full_noise_cloud)
+
+    merged_terrain_cloud = None
 
     tiles = []
     for i in range(n_tiles_x):
@@ -396,9 +401,15 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
             # TODO: randomly rotate tile
             cur_terrain_tile = random.choice(terrain_tiles)
 
-            noise_cloud, tile_cloud = overlay_noise(cur_terrain_tile, cur_noise_tile, interpolator)
+            noise_cloud, tile_cloud = overlay_single_tile(cur_terrain_tile, cur_noise_tile, interpolator)
             tiles.append(tile_cloud)
             tiles.append(noise_cloud)
+
+            if merged_terrain_cloud is None:
+                # copy constructor
+                merged_terrain_cloud = o3d.geometry.PointCloud(tile_cloud)
+            else:
+                merged_terrain_cloud += tile_cloud
             # vis.add_geometry(noise_cloud)
             # vis.add_geometry(tile_cloud)
             
@@ -411,7 +422,9 @@ def fill_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
     # vis.destroy_window()
 
     # tiles.append(full_noise_cloud)
-    o3d.visualization.draw_geometries(tiles)
+    # o3d.visualization.draw_geometries(tiles)
+
+    return merged_terrain_cloud
     
 
 
@@ -478,7 +491,7 @@ def main():
 
 
 
-    # fill_terrain(noise_2d, noise_coordinates, interpolator, terrain_tiles)
+    # overlay_terrain(noise_2d, noise_coordinates, interpolator, terrain_tiles)
 
     return
 
