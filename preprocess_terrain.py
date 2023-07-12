@@ -12,6 +12,7 @@ import time
 POINTS_PER_METER = 10
 GRID_SIZE = 1 # in metres
 VOXEL_SIZE = 0.01
+STEP_SIZE = 0.01 # for binning in lowest point extraction and overlaying
 
 def tile_is_square_of_gridsize(tile_cloud, GRID_SIZE):
     BOUND = GRID_SIZE*0.075
@@ -204,7 +205,7 @@ def extract_lowest(terrain_tile):
 
     return bottom_cloud, top_cloud
 
-def extract_lowest_alt(terrain_tile, step_size):
+def extract_lowest_alt(terrain_tile, step_size=STEP_SIZE):
     # divide tile into bins of step_size and select bottom points in each bin by comparing to neighbouring bins
 
     min_bound = terrain_tile.get_min_bound()
@@ -213,8 +214,8 @@ def extract_lowest_alt(terrain_tile, step_size):
     x_range = np.arange(min_bound[0], max_bound[0], step=step_size)
     y_range = np.arange(min_bound[1], max_bound[1], step=step_size)
 
-    bottom_cloud = o3d.geometry.PointCloud()
-    top_cloud = o3d.geometry.PointCloud()
+    # bottom_cloud = o3d.geometry.PointCloud()
+    # top_cloud = o3d.geometry.PointCloud()
 
     x_bins = len(x_range)
     y_bins = len(y_range)
@@ -259,13 +260,22 @@ def extract_lowest_alt(terrain_tile, step_size):
             points_bot.append(point)
             bins_lowest[i][j] = point
     
-    bottom_cloud = o3d.geometry.PointCloud()
-    bottom_cloud.points = o3d.utility.Vector3dVector(np.array(points_bot))
-    bottom_cloud.paint_uniform_color(np.array([0,1,0]))
-    top_cloud = o3d.geometry.PointCloud()
-    top_cloud.points = o3d.utility.Vector3dVector(np.array(points_top))
-    top_cloud.paint_uniform_color(np.array([1,0,0]))
-    return bottom_cloud, top_cloud, bins, bins_lowest
+    # bottom_cloud = o3d.geometry.PointCloud()
+    # bottom_cloud.points = o3d.utility.Vector3dVector(np.array(points_bot))
+    # bottom_cloud.paint_uniform_color(np.array([0,1,0]))
+    # top_cloud = o3d.geometry.PointCloud()
+    # top_cloud.points = o3d.utility.Vector3dVector(np.array(points_top))
+    # top_cloud.paint_uniform_color(np.array([1,0,0]))
+    return bins, bins_lowest
+
+
+def precalc_lowest(terrain_tiles):
+    bin_arr = []
+    for tile in terrain_tiles:
+        bins_tuple = extract_lowest_alt(tile)
+        bin_arr.append(bins_tuple)
+
+    return bin_arr
 
 
 def get_closest_lowest(bins_lowest, i, j, point):
@@ -294,10 +304,9 @@ def get_closest_lowest(bins_lowest, i, j, point):
             return bins_lowest[closest_xy[0]][closest_xy[1]]
         index_offset += 1
 
-
-def overlay_single_tile(terrain_tile, noise_tile, interpolator):
-    STEP_SIZE = 0.01
-    bottom_pc, top_pc, bins, bins_lowest = extract_lowest_alt(terrain_tile, step_size=STEP_SIZE)
+def overlay_single_tile(terrain_tile, noise_tile, interpolator, bins_tuple):
+    # bins, bins_lowest = extract_lowest_alt(terrain_tile, step_size=STEP_SIZE)
+    bins, bins_lowest = bins_tuple
 
     all_points = []
 
@@ -349,6 +358,7 @@ def overlay_single_tile(terrain_tile, noise_tile, interpolator):
 
     return noise_cloud, corrected_cloud
 
+
 # TODO: preprocess common operations in overlay_single_tile when number of tiles is larger then total number of terrain tiles
 def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
 
@@ -360,6 +370,12 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
     x_edge_points_rng = (n_x-1) % pptile
     n_tiles_y = m.ceil((n_y-1) / pptile)
     y_edge_points_rng = (n_x-1) % pptile
+
+    random.shuffle(terrain_tiles)
+    number_of_tiles = len(terrain_tiles)
+
+    # pre extract binned tile and lowest points
+    bins_array = precalc_lowest(terrain_tiles)
 
     
     print(f"Overlaying noise, {n_tiles_x*n_tiles_y} tiles of size {GRID_SIZE}x{GRID_SIZE}")
@@ -397,11 +413,13 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
                 cur_noise_tile.append(noise_coordinates[shift+l*n_x:shift+l*n_x+x_index_range])
             cur_noise_tile = np.vstack(cur_noise_tile)
 
-            # TODO: replace this by shuffled list and mod index
-            # TODO: randomly rotate tile
-            cur_terrain_tile = random.choice(terrain_tiles)
+            # TODO: randomly rotate tile? also need to rotate bins array
 
-            noise_cloud, tile_cloud = overlay_single_tile(cur_terrain_tile, cur_noise_tile, interpolator)
+            index = (i*n_tiles_y + j) % number_of_tiles
+            cur_terrain_tile = terrain_tiles[index]
+            bins_tuple = bins_array[index]
+
+            noise_cloud, tile_cloud = overlay_single_tile(cur_terrain_tile, cur_noise_tile, interpolator, bins_tuple)
             tiles.append(tile_cloud)
             tiles.append(noise_cloud)
 
