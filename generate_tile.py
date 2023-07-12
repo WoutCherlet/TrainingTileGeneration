@@ -397,10 +397,11 @@ def perlin_terrain():
     ny = round(POINTS_PER_METER * MAX_SIZE_Y) + 1
 
     # perlin noise settings
-    RES = 4
+    RES = 3
     LACUNARITY = 2
     OCTAVES = 6
-    PERSISTENCE = 0.4
+    PERSISTENCE = 0.45
+    SCALE = random.uniform(2.5, 4)
 
     # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
     shape_factor = RES*(LACUNARITY**(OCTAVES-1))
@@ -410,7 +411,6 @@ def perlin_terrain():
     perlin_noise = generate_fractal_noise_2d((perlin_nx, perlin_ny), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY, persistence=PERSISTENCE)
     perlin_noise = perlin_noise[:nx, :ny]
 
-    SCALE = 2.5
     perlin_noise = perlin_noise * SCALE
     
     return perlin_noise

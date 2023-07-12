@@ -73,12 +73,12 @@ def preprocess_terrain(terrain_cloud):
                 terrain_tile.translate(translation)
                 terrain_tile = terrain_tile.voxel_down_sample(VOXEL_SIZE)
                 tiles.append(terrain_tile)
-                # # TODO: TEMP: COLOR
+                # TEMP: COLOR
                 terrain_tile.paint_uniform_color(np.array([0,1,0]))
             else:
                 terrain_tile.paint_uniform_color(np.array([1,0,0]))
 
-            # TODO: TEMP: slight shift for visualization
+            # TEMP: slight shift for visualization
             # terrain_tile.translate(np.array([i*visualization_shift, j*visualization_shift, 0]))
             # tiles.append(terrain_tile)
 
@@ -89,17 +89,17 @@ def preprocess_terrain(terrain_cloud):
 
 def generate_perlin_noise():
     # sample of how perlin noise is generated in tile generation code, for testing purposes
-    NOISE_SIZE_X = 50
-    NOISE_SIZE_Y = 50
-
+    NOISE_SIZE_X = 60
+    NOISE_SIZE_Y = 60
 
     nx = round(POINTS_PER_METER * NOISE_SIZE_X) + 1
     ny = round(POINTS_PER_METER * NOISE_SIZE_Y) + 1
 
-    RES = 4
+    RES = 3
     LACUNARITY = 2
     OCTAVES = 6
-    PERSISTENCE = 0.4
+    PERSISTENCE = 0.45
+    SCALE = 2.5
 
     # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
     shape_factor = RES*(LACUNARITY**(OCTAVES-1))
@@ -112,20 +112,6 @@ def generate_perlin_noise():
     perlin_noise = generate_fractal_noise_2d((perlin_nx, perlin_ny), (RES, RES), octaves=OCTAVES, lacunarity=LACUNARITY, persistence=PERSISTENCE)
     perlin_noise_crop = perlin_noise[:nx, :ny]
 
-    # TODO: problem with noise generation:
-    # generation is size-specific 
-    # ie will give good noise distribution and for whole tile of size (perlin_nx, perlin_ny)
-    # when cropping only small part is selected, and a lot of diversity is lost
-
-    # IDEA: (might be overengineered):
-    # get distribution of original noise and rescale cropped noise to these dimensions
-    # might still lose a lot of detail depending on plot size
-
-    # better: just use known decent settings for big size and then crop
-
-    # TODO: finalize good settings
-
-    SCALE = 2.5
     perlin_noise_crop = perlin_noise_crop * SCALE
 
     perlin_noise = perlin_noise * SCALE
@@ -148,16 +134,16 @@ def generate_perlin_noise():
     z_arr_perlin = perlin_noise.T.flatten()
     perlin_points_3d = np.column_stack((perlin_xy, z_arr_perlin))
     
-    cloud = o3d.geometry.PointCloud()
-    cloud.points = o3d.utility.Vector3dVector(np.array(points_3d))
-    cloud.paint_uniform_color(np.array([0,1,0]))
+    # cloud = o3d.geometry.PointCloud()
+    # cloud.points = o3d.utility.Vector3dVector(np.array(points_3d))
+    # cloud.paint_uniform_color(np.array([0,1,0]))
 
-    perlin_cloud = o3d.geometry.PointCloud()
-    perlin_cloud.points = o3d.utility.Vector3dVector(np.array(perlin_points_3d))
-    perlin_cloud.paint_uniform_color(np.array([1,0,0]))
+    # perlin_cloud = o3d.geometry.PointCloud()
+    # perlin_cloud.points = o3d.utility.Vector3dVector(np.array(perlin_points_3d))
+    # perlin_cloud.paint_uniform_color(np.array([1,0,0]))
     
 
-    o3d.visualization.draw_geometries([cloud, perlin_cloud])
+    # o3d.visualization.draw_geometries([cloud, perlin_cloud])
     return perlin_noise, points_3d, interpolator
 
 
@@ -359,7 +345,6 @@ def overlay_single_tile(terrain_tile, noise_tile, interpolator, bins_tuple):
     return noise_cloud, corrected_cloud
 
 
-# TODO: preprocess common operations in overlay_single_tile when number of tiles is larger then total number of terrain tiles
 def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
 
     # get dimensions of noise terrain to fill up
@@ -502,10 +487,10 @@ def main():
     noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
 
     
-    # noise_cloud = o3d.geometry.PointCloud()
-    # noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
+    noise_cloud = o3d.geometry.PointCloud()
+    noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
 
-    # o3d.visualization.draw_geometries([noise_cloud])
+    o3d.visualization.draw_geometries([noise_cloud])
 
 
 
