@@ -371,7 +371,7 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
 
     # vis = o3d.visualization.Visualizer()
     # vis.create_window()
-    # ctr = vis.get_view_control() # TODO: if we can fix this, it's a nice visualization
+    # ctr = vis.get_view_control() # NOTE: if we can fix this, it's a nice visualization
     # ctr.rotate(50.0, 0.0)
     # vis.add_geometry(full_noise_cloud)
 
@@ -397,8 +397,6 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
             for l in range(y_index_range):
                 cur_noise_tile.append(noise_coordinates[shift+l*n_x:shift+l*n_x+x_index_range])
             cur_noise_tile = np.vstack(cur_noise_tile)
-
-            # TODO: randomly rotate tile? also need to rotate bins array
 
             index = (i*n_tiles_y + j) % number_of_tiles
             cur_terrain_tile = terrain_tiles[index]
