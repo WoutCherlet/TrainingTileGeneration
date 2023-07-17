@@ -31,7 +31,7 @@ SEMANTIC_MAP = {
 POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
 GRID_SIZE = 1
 STEP_SIZE = 0.01 # for binning in lowest point extraction and overlaying
-TREES_PER_PLOT = 1 # NOTE: slight variations in this to get different amount of instances per plot?
+TREES_PER_PLOT = 2
 # max size of plot
 MAX_SIZE_X = 60
 MAX_SIZE_Y = 60
@@ -212,6 +212,10 @@ def assemble_trees_grid(trees, terrain_noise, n_trees=9, debug=False):
             name = random.choice(trees_list)
             trees_list.remove(name)
         
+        # TODO: TEMP for quick tests
+        if TREES_PER_PLOT == 1:
+            name = 'wytham_winter_5b'
+
         pc, _, tri_mesh = trees[name]
 
         # save all transforms for this tree to single matrix
@@ -545,12 +549,13 @@ def precalc_lowest(terrain_tiles):
 
     return bin_arr
 
-def trunk_in_tile(cur_noise_tile):
-    # TODO: implement: decide if using bbox, tree hull, or center position
-    # plan: get max bound and min bounds of cur_noise_tile
-    # check with all (hulls or positions ??) if they are in tile
-    # if any tree in tile return True
-    return False
+def trunk_in_tile(cur_noise_tile, trunk_corner_points):
+    noise_max = np.amax(cur_noise_tile, axis=0)[:2]
+    noise_min = np.amin(cur_noise_tile, axis=0)[:2]
+
+    # check if any corner point inside tile
+    point_in_tile = np.any(np.all(np.logical_and(noise_min <= trunk_corner_points, trunk_corner_points <= noise_max), axis=1)) # expl: logical and for upper and lower bound, np.all along axis 1 to check both x and y, then np.any to check all points
+    return point_in_tile
 
 def get_closest_lowest(bins_lowest, i, j, point):
     # if no lowest point at i,j, look in tiles around it for a lowest point by checking moore neighboorhoud for closest lowest point
@@ -632,7 +637,22 @@ def overlay_single_tile(terrain_tile, noise_tile, interpolator, bins_tuple):
 
     return noise_cloud, corrected_cloud
 
-def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
+def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles, trunk_hulls):
+
+    # get trunk bbox corner points
+    trunk_corner_points = []
+    for trunk in trunk_hulls:
+        trunk_3d, _ = trunk_hulls[trunk]
+        hull_points_2d = trunk_3d[:,:2]
+        max_hull_2d = np.amax(hull_points_2d, axis=0)
+        min_hull_2d = np.amin(hull_points_2d, axis=0)
+        trunk_corner_points.append([min_hull_2d[0], min_hull_2d[1]])
+        trunk_corner_points.append([min_hull_2d[0], max_hull_2d[1]])
+        trunk_corner_points.append([max_hull_2d[0], min_hull_2d[1]])
+        trunk_corner_points.append([max_hull_2d[0], max_hull_2d[1]])
+    
+    trunk_corner_points = np.array(trunk_corner_points)
+    print(trunk_corner_points)
 
     # get dimensions of noise terrain to fill up
     pptile = GRID_SIZE*POINTS_PER_METER
@@ -643,6 +663,7 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
     n_tiles_y = m.ceil((n_y-1) / pptile)
     y_edge_points_rng = (n_x-1) % pptile
 
+    # prepare cuttable and non cuttable tiles
     cuttable_tiles = terrain_tiles[0]
     non_cuttable_tiles = terrain_tiles[1]
     random.shuffle(cuttable_tiles)
@@ -683,9 +704,8 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
                 cur_noise_tile.append(noise_coordinates[shift+l*n_x:shift+l*n_x+x_index_range])
             cur_noise_tile = np.vstack(cur_noise_tile)
 
-            # TODO: randomly rotate tile? also need to rotate bins array
-
-            if trunk_in_tile(terrain_tiles):
+            # select tile
+            if trunk_in_tile(cur_noise_tile, trunk_corner_points):
                 cur_terrain_tile = cuttable_tiles[cuttable_idx]
                 bins_tuple = bins_cuttable[cuttable_idx]
                 cuttable_idx += 1
@@ -695,7 +715,6 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
                     c = list(zip(cuttable_tiles, bins_cuttable))
                     random.shuffle(c)
                     cuttable_tiles, bins_cuttable = zip(*c)
-
             else:
                 cur_terrain_tile = non_cuttable_tiles[non_cuttable_idx]
                 bins_tuple = bins_non_cuttable[non_cuttable_idx]
@@ -707,6 +726,8 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
                     random.shuffle(c)
                     non_cuttable_tiles, bins_non_cuttable = zip(*c)
             
+            # TODO: randomly rotate tile? also need to rotate bins array which is probably a little expensive
+
             # overlay single noise tile on noise
             noise_cloud, tile_cloud = overlay_single_tile(cur_terrain_tile, cur_noise_tile, interpolator, bins_tuple)
             tiles.append(tile_cloud)
@@ -717,20 +738,6 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles):
                 merged_terrain_cloud = o3d.geometry.PointCloud(tile_cloud)
             else:
                 merged_terrain_cloud += tile_cloud
-            # vis.add_geometry(noise_cloud)
-            # vis.add_geometry(tile_cloud)
-            
-            # vis.poll_events()
-            # vis.update_renderer()
-            # time.sleep(1)
-
-
-    # time.sleep(100)
-    # vis.destroy_window()
-
-    # tiles.append(full_noise_cloud)
-    # o3d.visualization.draw_geometries(tiles)
-
     return merged_terrain_cloud
     
 
@@ -801,7 +808,7 @@ def build_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes, terrain_ti
     interpolator = interpolate.RegularGridInterpolator((x,y), final_xy_map)
 
     print("Overlaying real terrain tiles")
-    merged_terrain_cloud = overlay_terrain(final_xy_map, points_3d, interpolator, terrain_tiles)
+    merged_terrain_cloud = overlay_terrain(final_xy_map, points_3d, interpolator, terrain_tiles, trunk_hulls)
     points_3d_real = np.asarray(merged_terrain_cloud.points)
 
     print("Removing terrain inside tree trunks")
@@ -845,7 +852,13 @@ def generate_tile(trees, terrain_tiles, debug=DEBUG):
 
     terrain_noise = perlin_terrain()
 
-    plot, transforms = assemble_trees_grid(trees, terrain_noise, n_trees=TREES_PER_PLOT, debug=debug)
+    # get variation in number of trees
+    if not debug:
+        n_trees = random.randint(max(TREES_PER_PLOT-3,0), TREES_PER_PLOT+3)
+    else:
+        n_trees = TREES_PER_PLOT
+
+    plot, transforms = assemble_trees_grid(trees, terrain_noise, n_trees=n_trees, debug=debug)
     
     # apply derived transforms to pointcloud and get trunk locations
     merged_cloud = None
