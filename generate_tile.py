@@ -832,6 +832,10 @@ def save_tile(out_dir, out_pc, tile_id, downsampled=True):
 
     out_path = os.path.join(out_dir, f"Tile_{tile_id}.ply")
 
+    while os.path.exists(out_path):
+        tile_id += 1
+        out_path = os.path.join(out_dir, f"Tile_{tile_id}.ply")
+
     o3d.t.io.write_point_cloud(out_path, out_pc)
 
     # possibly also write downsampled version
