@@ -440,9 +440,12 @@ def build_library(terrain_cloud, out_dir):
     cuttable_out_dir = os.path.join(out_dir, f"tiled_{GRID_SIZE}", "cuttable")
     non_cuttable_out_dir = os.path.join(out_dir, f"tiled_{GRID_SIZE}", "non_cuttable")
     all_out_dir = os.path.join(out_dir, f"tiled_{GRID_SIZE}", "all")
-    os.makedirs(cuttable_out_dir)
-    os.makedirs(non_cuttable_out_dir)
-    os.makedirs(all_out_dir)
+    if not os.path.exists(cuttable_out_dir):
+        os.makedirs(cuttable_out_dir)
+    if not os.path.exists(non_cuttable_out_dir):
+        os.makedirs(non_cuttable_out_dir)
+    if not os.path.exists(all_out_dir):
+        os.makedirs(all_out_dir)
 
     # visualize tile and classify
     for i, tile in enumerate(tiles):
@@ -468,27 +471,27 @@ def build_library(terrain_cloud, out_dir):
 
 
 def main():
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("-t", "--terrain_cloud", required=True)
-    # parser.add_argument("-o", "--out_dir")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--terrain_cloud", required=True)
+    parser.add_argument("-o", "--out_dir", required=True)
 
-    # args = parser.parse_args()
+    args = parser.parse_args()
 
-    # if not os.path.exists(args.terrain_cloud):
-        # print(f"Couldn't read input dir {args.terrain_cloud}!")
-        # return
+    if not os.path.exists(args.terrain_cloud):
+        print(f"Couldn't read input dir {args.terrain_cloud}!")
+        return
     
-    # build_library(args.terrain_cloud, args.out_dir)
+    build_library(args.terrain_cloud, args.out_dir)
 
     # terrain_tiles = preprocess_terrain(args.terrain_cloud)
 
-    noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
+    # noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
 
     
-    noise_cloud = o3d.geometry.PointCloud()
-    noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
+    # noise_cloud = o3d.geometry.PointCloud()
+    # noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
 
-    o3d.visualization.draw_geometries([noise_cloud])
+    # o3d.visualization.draw_geometries([noise_cloud])
 
 
 

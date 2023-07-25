@@ -7,7 +7,7 @@ import numpy as np
 
 from utils import read_clouds, combine_pcds, get_bbox
 
-DATA_DIR = "/home/wcherlet/data/Wytham2015"
+DATA_DIR = "/home/wcherlet/data/singletrees/Wytham2015"
 
 
 def write_bboxs(pc_folder, bbox_extent, bbox_trees):
@@ -229,7 +229,7 @@ def main():
     # write_bboxs(pc_folder, bbox_extent, bbox_trees)
 
     # only run once!!
-    # clip_tiles(bbox_extent, valid_tiles_path, clipped_tiles_dir)
+    clip_tiles(bbox_extent, valid_tiles_path, clipped_tiles_dir)
 
     # get_understory(pc_folder, clipped_tiles_dir, bbox_trees)
 

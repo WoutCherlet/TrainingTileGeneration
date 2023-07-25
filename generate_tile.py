@@ -31,7 +31,7 @@ SEMANTIC_MAP = {
 POINTS_PER_METER = 10 # NOTE: if changing this, will probably need to recalibrate a lot of the other parameters too
 GRID_SIZE = 1
 STEP_SIZE = 0.01 # for binning in lowest point extraction and overlaying
-TREES_PER_PLOT = 2
+TREES_PER_PLOT = 9
 # max size of plot
 MAX_SIZE_X = 60
 MAX_SIZE_Y = 60
@@ -213,8 +213,8 @@ def assemble_trees_grid(trees, terrain_noise, n_trees=9, debug=False):
             trees_list.remove(name)
         
         # TODO: TEMP for quick tests
-        if TREES_PER_PLOT == 1:
-            name = 'wytham_winter_5b'
+        # if TREES_PER_PLOT == 1:
+        #     name = 'wytham_winter_5b'
 
         pc, _, tri_mesh = trees[name]
 
@@ -652,7 +652,6 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles, tr
         trunk_corner_points.append([max_hull_2d[0], max_hull_2d[1]])
     
     trunk_corner_points = np.array(trunk_corner_points)
-    print(trunk_corner_points)
 
     # get dimensions of noise terrain to fill up
     pptile = GRID_SIZE*POINTS_PER_METER
@@ -937,7 +936,7 @@ def generate_tiles(mesh_dir, pc_dir, tiles_dir, out_dir, alpha=None, n_tiles=10)
 
     print(f"Read {len(trees)} trees")
 
-    print(f"Generating {n_tiles}")
+    print(f"Generating {n_tiles} tiles")
     for i in range(n_tiles):
 
         start_time = time.process_time()
@@ -957,7 +956,7 @@ def main():
     parser.add_argument("-t", "--tile_directory", required=True)
     parser.add_argument("-d", "--mesh_directory", default=None)
     parser.add_argument("-o", "--output_directory", default=None)
-    parser.add_argument("-n", "--n_tiles", default=10)
+    parser.add_argument("-n", "--n_tiles", default=10, type=int)
 
     args = parser.parse_args()
 
@@ -985,18 +984,18 @@ def main():
     else:
         out_dir = os.path.join(args.pointcloud_directory, "synthetic_tiles")
     
-    # generate_tiles(args.mesh_directory, args.pointcloud_directory, args.tile_directory, out_dir, n_tiles=args.n_tiles)
+    generate_tiles(args.mesh_directory, args.pointcloud_directory, args.tile_directory, out_dir, n_tiles=args.n_tiles)
 
-    trees = read_trees(args.mesh_directory, args.pointcloud_directory)
-    terrain_tiles = read_terrain_tiles(args.tile_directory)
+    # trees = read_trees(args.mesh_directory, args.pointcloud_directory)
+    # terrain_tiles = read_terrain_tiles(args.tile_directory)
 
-    tile_cloud, _ = generate_tile(trees, terrain_tiles)
+    # tile_cloud, _ = generate_tile(trees, terrain_tiles)
 
-    print(tile_cloud.get_max_bound() - tile_cloud.get_min_bound())
+    # print(tile_cloud.get_max_bound() - tile_cloud.get_min_bound())
 
-    tile_vec = Tensor2VecPC(tile_cloud)
+    # tile_vec = Tensor2VecPC(tile_cloud)
 
-    o3d.visualization.draw_geometries([tile_vec])
+    # o3d.visualization.draw_geometries([tile_vec])
 
     return
 
