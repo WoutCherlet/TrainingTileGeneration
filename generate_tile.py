@@ -103,6 +103,9 @@ def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_
 
     noise_idx_x = round(POINTS_PER_METER * trunk_center_x)
     noise_idx_y = round(POINTS_PER_METER * trunk_center_y)
+    noise_idx_x = min(len(noise_2d), noise_idx_x)
+    noise_idx_y = min(len(noise_2d[0]), noise_idx_y)
+
     z_target = noise_2d[noise_idx_x][noise_idx_y]
 
 
