@@ -52,7 +52,10 @@ def preprocess_terrain(terrain_cloud):
     bins_x, bins_y, _ = (max_bound - min_bound) // GRID_SIZE
     tiles = []
 
-    visualization_shift = 0.10
+    visualization_shift = 0.15
+
+    # TODO: temp for vis
+    merged_cloud = None
 
     for i in range(0, int(bins_x)):
         for j in range(0, int(bins_y)):
@@ -69,20 +72,29 @@ def preprocess_terrain(terrain_cloud):
 
             # only keep tile if full size
             if tile_is_square_of_gridsize(terrain_tile, GRID_SIZE):
-                translation = np.array([-i*GRID_SIZE, -j*GRID_SIZE, 0]) - min_bound
-                terrain_tile.translate(translation)
+                # translation = np.array([-i*GRID_SIZE, -j*GRID_SIZE, 0]) - min_bound
+                # terrain_tile.translate(translation)
                 terrain_tile = terrain_tile.voxel_down_sample(VOXEL_SIZE)
+                # TEMP: slight shift for visualization
+                terrain_tile.translate(np.array([i*visualization_shift, j*visualization_shift, 0]))
                 tiles.append(terrain_tile)
                 # TEMP: COLOR
-                terrain_tile.paint_uniform_color(np.array([0,1,0]))
+                # terrain_tile.paint_uniform_color(np.array([0,1,0]))
+                
+                # TODO: TEMP for vis
+                if merged_cloud is None:
+                    merged_cloud = terrain_tile
+                else:
+                    merged_cloud += terrain_tile
             else:
-                terrain_tile.paint_uniform_color(np.array([1,0,0]))
+                # terrain_tile.paint_uniform_color(np.array([1,0,0]))
+                pass
 
-            # TEMP: slight shift for visualization
-            # terrain_tile.translate(np.array([i*visualization_shift, j*visualization_shift, 0]))
-            # tiles.append(terrain_tile)
 
-    # o3d.visualization.draw_geometries(tiles)
+
+    o3d.visualization.draw_geometries([merged_cloud])
+
+    o3d.io.write_point_cloud("terrain_tiles.ply", merged_cloud)
 
     return tiles
 
@@ -99,7 +111,7 @@ def generate_perlin_noise():
     LACUNARITY = 2
     OCTAVES = 6
     PERSISTENCE = 0.45
-    SCALE = 2.5
+    SCALE = 3
 
     # get dimensions to generate perlin noise, shape must be multiple of res*lacunarity**(octaves - 1)
     shape_factor = RES*(LACUNARITY**(OCTAVES-1))
@@ -473,17 +485,17 @@ def build_library(terrain_cloud, out_dir):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--terrain_cloud", required=True)
-    parser.add_argument("-o", "--out_dir", required=True)
+    # parser.add_argument("-o", "--out_dir", required=True)
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.terrain_cloud):
-        print(f"Couldn't read input dir {args.terrain_cloud}!")
-        return
+    # if not os.path.exists(args.terrain_cloud):
+    #     print(f"Couldn't read input dir {args.terrain_cloud}!")
+    #     return
     
-    build_library(args.terrain_cloud, args.out_dir)
+    # build_library(args.terrain_cloud, args.out_dir)
 
-    # terrain_tiles = preprocess_terrain(args.terrain_cloud)
+    terrain_tiles = preprocess_terrain(args.terrain_cloud)
 
     # noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
 
@@ -492,6 +504,8 @@ def main():
     # noise_cloud.points = o3d.utility.Vector3dVector(np.array(noise_coordinates))
 
     # o3d.visualization.draw_geometries([noise_cloud])
+
+    # o3d.io.write_point_cloud("terrain.ply", noise_cloud)
 
 
 
