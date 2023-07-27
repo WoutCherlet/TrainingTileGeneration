@@ -103,6 +103,9 @@ def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_
 
     noise_idx_x = round(POINTS_PER_METER * trunk_center_x)
     noise_idx_y = round(POINTS_PER_METER * trunk_center_y)
+    noise_idx_x = min(len(noise_2d)-1, noise_idx_x)
+    noise_idx_y = min(len(noise_2d[0])-1, noise_idx_y)
+
     z_target = noise_2d[noise_idx_x][noise_idx_y]
 
 
@@ -955,16 +958,18 @@ def generate_tiles(mesh_dir, pc_dir, tiles_dir, out_dir, alpha=None, n_tiles=10)
     print(f"Read {len(trees)} trees")
 
     print(f"Generating {n_tiles} tiles")
-    for i in range(n_tiles):
+    tile_id = 0
+    while tile_id < n_tiles:
 
         start_time = time.process_time()
         tile_cloud, tile_ok = generate_tile(trees, terrain_tiles)
         end_time = time.process_time()
-        print(f"Generated tile {i+1} in {end_time-start_time} seconds")
+        print(f"Generated tile {tile_id+1} in {end_time-start_time} seconds")
         if tile_ok:
-            save_tile(out_dir, tile_cloud, i+1)
+            save_tile(out_dir, tile_cloud, tile_id)
+            tile_id += 1
         else:
-            save_tile(os.path.join(out_dir, "too_large_debug"), tile_cloud, i+1, downsampled=False)
+            save_tile(os.path.join(out_dir, "too_large_debug"), tile_cloud, tile_id, downsampled=False)
     return
 
 
