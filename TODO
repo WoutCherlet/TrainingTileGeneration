@@ -1,12 +1,14 @@
 TODO: build bigger library of cuttable and non cuttable tile, function ready
 
 TODO: first run:
-  - test preprocessing script with small set
-  - seperate train and test trees from wytham dataset
   - run on desktop for large nr of tiles
   - first run with generated test files, work on getting actual test plots in parallel
 
-TODO: woody debris V2
+
+
+## V2
+
+TODO: woody debris
 plan: 2 options
 1. select at random from woody debris library
 2. do similar to plants, add afterwards OR add in somewhere in tree placement stage, will make it likely closer to trees and better placed but complicates terrain generation etc.

@@ -6,7 +6,7 @@ import glob
 import numpy as np
 import open3d as o3d
 
-def pc_2_alphacomplex(pc_dir, out_dir, alpha=0.5, decimation_factor=100, min_n_triangles=2500):
+def pc_2_alphacomplex(pc_dir, out_dir, alpha=0.5, decimation_factor=40, min_n_triangles=4000):
     pcs = []
     for file in sorted(glob.glob(os.path.join(pc_dir, "*.ply"))):
         pc = o3d.io.read_point_cloud(file)
@@ -16,8 +16,10 @@ def pc_2_alphacomplex(pc_dir, out_dir, alpha=0.5, decimation_factor=100, min_n_t
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
 
+    i = 1
     for name, pc in pcs:
-        print(f"Processing pc {name}")
+        print(f"Processing pc {name} ({i}/{len(pcs)})")
+        i += 1
         # create mesh
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_alpha_shape(pc, alpha)
         #decimate to 1/decimation_factor number of triangles

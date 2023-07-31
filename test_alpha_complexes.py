@@ -27,7 +27,7 @@ def test_decimation(pc, alpha):
 
     decimated_mesh.translate(np.array([10,0,0]))
 
-    decimated_mesh2 = mesh.simplify_quadric_decimation(target_number_of_triangles=int(n_triangles//50))
+    decimated_mesh2 = mesh.simplify_quadric_decimation(target_number_of_triangles=int(n_triangles//40))
     decimated_mesh2.translate(np.array([20,0,0]))
 
     decimated_mesh3 = mesh.simplify_quadric_decimation(target_number_of_triangles=int(n_triangles//100))
@@ -35,6 +35,10 @@ def test_decimation(pc, alpha):
 
     n_triangles = len(decimated_mesh.triangles)
     print(f"Number of triangles after decimation: {n_triangles}")
+    n_triangles = len(decimated_mesh2.triangles)
+    print(f"Number of triangles after decimation 2: {n_triangles}")
+    n_triangles = len(decimated_mesh3.triangles)
+    print(f"Number of triangles after decimation 3: {n_triangles}")
 
     o3d.visualization.draw_geometries([mesh, decimated_mesh, decimated_mesh2, decimated_mesh3], mesh_show_back_face=True, mesh_show_wireframe=True)
 
@@ -72,32 +76,32 @@ def read_plys(pc_dir):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-p", "--pointcloud", required=True)
+    # parser.add_argument("-d", "--pointcloud_directory", required=True)
+
+    args = parser.parse_args()
+
+    if not os.path.exists(args.pointcloud):
+        print(f"Couldn't find pc at {args.pointcloud}!")
+        return
+    alpha = 0.5
+    o3d_pc = o3d.io.read_point_cloud(args.pointcloud)
+    test_decimation(o3d_pc, alpha)
+
+
     # parser = argparse.ArgumentParser()
-    # parser.add_argument("-p", "--pointcloud", required=True)
     # parser.add_argument("-d", "--pointcloud_directory", required=True)
 
     # args = parser.parse_args()
 
-    # if not os.path.exists(args.pointcloud):
-    #     print(f"Couldn't find pc at {args.pointcloud}!")
+    # if not os.path.exists(args.pointcloud_directory):
+    #     print(f"Couldn't reaad path {args.pointcloud_directory}!")
     #     return
-    # alpha = 0.5
-    # o3d_pc = o3d.io.read_point_cloud(args.pointcloud)
-    # test_decimation(o3d_pc, alpha)
-
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--pointcloud_directory", required=True)
-
-    args = parser.parse_args()
-
-    if not os.path.exists(args.pointcloud_directory):
-        print(f"Couldn't reaad path {args.pointcloud_directory}!")
-        return
     
-    pcs = read_plys(args.pointcloud_directory)
+    # pcs = read_plys(args.pointcloud_directory)
 
-    place_trees_aligned(pcs)
+    # place_trees_aligned(pcs)
 
     return
 

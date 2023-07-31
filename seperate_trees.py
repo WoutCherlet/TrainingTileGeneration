@@ -127,11 +127,12 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
         os.mkdir(out_trees_exact)
 
     # Iterate over all tiles
-    for i in tqdm(range(len(tilenames))):
+    for i in range(len(tilenames)):
 
         # Read tile
         tilename = tilenames[i]
         tile = o3d.io.read_point_cloud(tilename)
+        print(f"Seperating {tilename} ({i}/{tilenames})")
 
         # Get bounds of tile
         points = np.asarray(tile.points)
@@ -181,15 +182,42 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
         # write tiles also
         o3d.io.write_point_cloud(os.path.join(out_understory, f"understory_{os.path.basename(tilename)}"), understory_cloud)
 
-    print("Merging understory tiles")
+        # TODO: TEMP: only one tile
 
-    combine_pcds(understory_tiles, path_out=os.path.join(DATA_DIR, "understory.ply"))
+        understory_points_kd, tree_points_kd = kd_tree_redivision(understory_points, tree_points)
+        break
+
+    # print("Merging understory tiles")
+
+    # combine_pcds(understory_tiles, path_out=os.path.join(DATA_DIR, "understory.ply"))
 
     return
+ 
 
-def get_terrain():
-    # TODO: terrain seperation
-    pass
+def kd_tree_redivision(understory_points, tree_points):
+
+    understory_labels = np.zeros(understory_points.shape, dtype=np.int8)
+    tree_labels = np.ones(tree_points.shape, dtype=np.int8)
+
+    all_points = np.concatenate([understory_points, tree_points])
+    all_labels = np.concatenate([understory_labels, tree_labels])
+
+    corrected_labels = np.copy(all_labels)
+
+    pc = o3d.geometry.PointCloud()
+    pc.points = o3d.utility.Vector3dVector(all_points)
+
+    print("Creating KDTree")
+    pcd_tree = o3d.geometry.KDTreeFlann(pc)
+
+    print("Checking understory points")
+    N_CLOSEST = 100
+    for point in understory_points:
+
+        [k, idx, _] = pcd_tree.search_knn_vector_3d(point, N_CLOSEST)
+
+        # TODO: correct labels based on labels at positions idx
+
 
 
 
@@ -229,9 +257,9 @@ def main():
     # write_bboxs(pc_folder, bbox_extent, bbox_trees)
 
     # only run once!!
-    clip_tiles(bbox_extent, valid_tiles_path, clipped_tiles_dir)
+    # clip_tiles(bbox_extent, valid_tiles_path, clipped_tiles_dir)
 
-    # get_understory(pc_folder, clipped_tiles_dir, bbox_trees)
+    get_understory(pc_folder, clipped_tiles_dir, bbox_trees)
 
     # post_process_pc()
     return
