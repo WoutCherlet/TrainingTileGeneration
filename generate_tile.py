@@ -807,15 +807,6 @@ def build_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes, terrain_ti
     z_arr = final_xy_map.T.flatten()
     points_3d = np.column_stack((points_xy, z_arr))
 
-    
-    # TODO: TEMP: VIS
-    tensor_3d_perlin = o3d.core.Tensor(points_3d.astype(np.float32))
-    terrain_cloud_perlin = o3d.t.geometry.PointCloud()
-    terrain_cloud_perlin.point.positions = tensor_3d_perlin
-
-    o3d.t.io.write_point_cloud("perlin_noise.ply", terrain_cloud_perlin)
-    # END TEMP
-
 
     interpolator = interpolate.RegularGridInterpolator((x,y), final_xy_map)
 
@@ -827,7 +818,7 @@ def build_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes, terrain_ti
     points_3d_cleaned = remove_points_inside_alpha_shape(points_3d_real, alphashapes)
 
     # to pointcloud
-    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float32))
+    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float64))
     terrain_cloud = o3d.t.geometry.PointCloud()
     terrain_cloud.point.positions = tensor_3d
     # add labels to terrain cloud: semantic terrain label is 0, no instance so -1
@@ -934,8 +925,12 @@ def generate_tile(trees, terrain_tiles, debug=DEBUG):
     terrain_cloud = build_terrain(merged_cloud, terrain_noise, trunk_hulls, alphashapes, terrain_tiles)
 
     # TODO: TEMP for vis
-    o3d.t.io.write_point_cloud("terrain_merged_isolated.ply", terrain_cloud)
-    o3d.t.io.write_point_cloud("trees_merged_isolated.ply", merged_cloud)
+    # o3d.t.io.write_point_cloud("assets/terrain_merged_isolated.ply", terrain_cloud)
+
+    # downsample terrain to limit mem
+    terrain_cloud_ds = terrain_cloud.voxel_down_sample(voxel_size=0.025)
+
+    o3d.t.io.write_point_cloud("assets/trees_isolated.ply", merged_cloud)
 
 
     if debug:
@@ -945,7 +940,7 @@ def generate_tile(trees, terrain_tiles, debug=DEBUG):
     if debug:
         o3d.visualization.draw_geometries([merged_plot_debug, terrain_cloud_debug])
 
-    merged_cloud += terrain_cloud
+    merged_cloud += terrain_cloud_ds
 
     return merged_cloud, True
 

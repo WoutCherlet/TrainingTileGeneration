@@ -8,6 +8,7 @@ from scipy import interpolate
 import random
 import time
 
+from boundingrectangle import boundingrectangle
 
 POINTS_PER_METER = 10
 GRID_SIZE = 1 # in metres
@@ -15,35 +16,52 @@ VOXEL_SIZE = 0.01
 STEP_SIZE = 0.01 # for binning in lowest point extraction and overlaying
 
 def tile_is_square_of_gridsize(tile_cloud, GRID_SIZE):
-    BOUND = GRID_SIZE*0.075
+    BOUND = GRID_SIZE*0.1
 
     tile_min_bound = tile_cloud.get_min_bound()
     tile_max_bound = tile_cloud.get_max_bound()
+    tile_height = tile_max_bound[2] - tile_min_bound[2] + 0.1
 
     # check if any points in all corners
     bl_min_bound = tile_min_bound
-    bl_max_bound = tile_min_bound + np.array([BOUND, BOUND, tile_max_bound[2]])
+    bl_max_bound = tile_min_bound + np.array([BOUND, BOUND, tile_height])
     bl_corner = o3d.geometry.AxisAlignedBoundingBox(min_bound=bl_min_bound, max_bound=bl_max_bound)
+    if bl_corner.is_empty():
+        print(bl_corner)
+        print(bl_corner.min_bound, bl_corner.max_bound)
+        print(tile_min_bound, tile_max_bound)
+        print(tile_max_bound[2])
     bl_corner_cloud = tile_cloud.crop(bl_corner)
     tl_min_bound = tile_min_bound + np.array([0, GRID_SIZE-BOUND, 0])
-    tl_max_bound = tile_min_bound + np.array([BOUND, GRID_SIZE, tile_max_bound[2]])
+    tl_max_bound = tile_min_bound + np.array([BOUND, GRID_SIZE, tile_height])
     tl_corner = o3d.geometry.AxisAlignedBoundingBox(min_bound=tl_min_bound, max_bound=tl_max_bound)
     tl_corner_cloud = tile_cloud.crop(tl_corner)
     br_min_bound = tile_min_bound + np.array([GRID_SIZE - BOUND, 0, 0])
-    br_max_bound = tile_min_bound + np.array([GRID_SIZE, BOUND, tile_max_bound[2]])
+    br_max_bound = tile_min_bound + np.array([GRID_SIZE, BOUND, tile_height])
     br_corner = o3d.geometry.AxisAlignedBoundingBox(min_bound=br_min_bound, max_bound = br_max_bound)
     br_corner_cloud = tile_cloud.crop(br_corner)
     tr_min_bound = tile_min_bound + np.array([GRID_SIZE - BOUND, GRID_SIZE - BOUND, 0])
-    tr_max_bound = tile_min_bound + np.array([GRID_SIZE, GRID_SIZE, tile_max_bound[2]])
+    tr_max_bound = tile_min_bound + np.array([GRID_SIZE, GRID_SIZE, tile_height])
     tr_corner = o3d.geometry.AxisAlignedBoundingBox(min_bound=tr_min_bound, max_bound = tr_max_bound)
     tr_corner_cloud = tile_cloud.crop(tr_corner)
 
     corners_empty = tl_corner_cloud.is_empty() or br_corner_cloud.is_empty() or tr_corner_cloud.is_empty() or bl_corner_cloud.is_empty()
+    # corners_empty = tl_corner_cloud.is_empty() or br_corner_cloud.is_empty() or tr_corner_cloud.is_empty()
 
     return not corners_empty
 
 def preprocess_terrain(terrain_cloud):
     pc = o3d.io.read_point_cloud(terrain_cloud)
+    
+    # # rotate terrain_cloud
+    _, corners = boundingrectangle(np.asarray(pc.points)[:,:2])
+
+    y_min_crnr = corners[np.argmin(corners, axis=0)[1]]
+    x_max_crnr = corners[np.argmax(corners, axis=0)[0]]
+    theta = m.atan2((x_max_crnr[1]-y_min_crnr[1] ), (x_max_crnr[0] - y_min_crnr[0]))
+    rot_matr_3D = np.array([[m.cos(theta), -m.sin(theta), 0], [m.sin(theta), m.cos(theta), 0], [0, 0, 1]])
+
+    pc = pc.rotate(rot_matr_3D)
 
     min_bound = pc.get_min_bound()
     max_bound = pc.get_max_bound()
@@ -52,10 +70,7 @@ def preprocess_terrain(terrain_cloud):
     bins_x, bins_y, _ = (max_bound - min_bound) // GRID_SIZE
     tiles = []
 
-    visualization_shift = 0.15
-
-    # TODO: temp for vis
-    merged_cloud = None
+    # visualization_shift = 0.15
 
     for i in range(0, int(bins_x)):
         for j in range(0, int(bins_y)):
@@ -72,29 +87,14 @@ def preprocess_terrain(terrain_cloud):
 
             # only keep tile if full size
             if tile_is_square_of_gridsize(terrain_tile, GRID_SIZE):
-                # translation = np.array([-i*GRID_SIZE, -j*GRID_SIZE, 0]) - min_bound
-                # terrain_tile.translate(translation)
+                translation = np.array([-i*GRID_SIZE, -j*GRID_SIZE, 0]) - min_bound
+                terrain_tile.translate(translation)
                 terrain_tile = terrain_tile.voxel_down_sample(VOXEL_SIZE)
                 # TEMP: slight shift for visualization
-                terrain_tile.translate(np.array([i*visualization_shift, j*visualization_shift, 0]))
+                # terrain_tile.translate(np.array([i*visualization_shift, j*visualization_shift, 0]))
                 tiles.append(terrain_tile)
-                # TEMP: COLOR
-                # terrain_tile.paint_uniform_color(np.array([0,1,0]))
-                
-                # TODO: TEMP for vis
-                if merged_cloud is None:
-                    merged_cloud = terrain_tile
-                else:
-                    merged_cloud += terrain_tile
             else:
-                # terrain_tile.paint_uniform_color(np.array([1,0,0]))
                 pass
-
-
-
-    o3d.visualization.draw_geometries([merged_cloud])
-
-    o3d.io.write_point_cloud("terrain_tiles.ply", merged_cloud)
 
     return tiles
 
@@ -463,17 +463,19 @@ def build_library(terrain_cloud, out_dir):
     for i, tile in enumerate(tiles):
         o3d.visualization.draw_geometries([tile])
 
-        cuttable = input("Type 'y' if tile is cuttable, type 'n' if not cuttable: ")
+        cuttable = input("Type 'y' if tile is cuttable, type 'n' if not cuttable, type 'd' if not usable: ")
 
-        while cuttable not in ["y", "n"]:
+        while cuttable not in ["y", "n", "d"]:
             print(f"Your input: {cuttable}")
-            print("Please select 'y' or 'n':")
+            print("Please select 'y', 'n' or 'd:")
             cuttable = input()
 
         if cuttable == "y":
             o3d.io.write_point_cloud(os.path.join(cuttable_out_dir, f"{plotname}_tile{i}.ply"), tile)
         elif cuttable == "n":
             o3d.io.write_point_cloud(os.path.join(non_cuttable_out_dir, f"{plotname}_tile{i}.ply"), tile)
+        elif cuttable == "d":
+            pass
 
         # also backup all tiles in one directory
         o3d.io.write_point_cloud(os.path.join(all_out_dir, f"{plotname}_tile{i}.ply"), tile)
@@ -485,17 +487,17 @@ def build_library(terrain_cloud, out_dir):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-t", "--terrain_cloud", required=True)
-    # parser.add_argument("-o", "--out_dir", required=True)
+    parser.add_argument("-o", "--out_dir", required=True)
 
     args = parser.parse_args()
 
-    # if not os.path.exists(args.terrain_cloud):
-    #     print(f"Couldn't read input dir {args.terrain_cloud}!")
-    #     return
+    if not os.path.exists(args.terrain_cloud):
+        print(f"Couldn't read input dir {args.terrain_cloud}!")
+        return
     
-    # build_library(args.terrain_cloud, args.out_dir)
+    build_library(args.terrain_cloud, args.out_dir)
 
-    terrain_tiles = preprocess_terrain(args.terrain_cloud)
+    # terrain_tiles = preprocess_terrain(args.terrain_cloud)
 
     # noise_2d, noise_coordinates, interpolator = generate_perlin_noise()
 
