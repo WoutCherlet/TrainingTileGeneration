@@ -766,7 +766,8 @@ def remove_points_inside_alpha_shape(points, alphashapes):
 
         # in hull mask is true at indices we want to delete
         in_hull_mask = points_in_alphashape(points_in_bbox[:,:2], polygon)
-        indices_to_delete = indices_in_bbox[in_hull_mask]
+        if len(in_hull_mask) > 0:
+            indices_to_delete = indices_in_bbox[in_hull_mask]
 
         # deletion_mask is False at indices we want to delete
         deletion_mask = np.ones(len(points), dtype=bool)
@@ -930,7 +931,7 @@ def generate_tile(trees, terrain_tiles, debug=DEBUG):
     # downsample terrain to limit mem
     terrain_cloud_ds = terrain_cloud.voxel_down_sample(voxel_size=0.025)
 
-    o3d.t.io.write_point_cloud("assets/trees_isolated.ply", merged_cloud)
+    # o3d.t.io.write_point_cloud("assets/trees_isolated.ply", merged_cloud)
 
 
     if debug:
