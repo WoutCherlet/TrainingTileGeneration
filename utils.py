@@ -24,7 +24,7 @@ __all__ = ['read_clouds', 'combine_pcds', 'get_bbox', 'cloud2voxel', 'cloud2mesh
 logger = logging.getLogger(__name__)
 
 
-def read_clouds(files_in, n=None, random=False, down_sample_size=None, color=False):
+def read_clouds(files_in, n=None, random=False, down_sample_size=None, color=False, tensor=False):
     """
     Read in point cloud files 
     
@@ -67,8 +67,11 @@ def read_clouds(files_in, n=None, random=False, down_sample_size=None, color=Fal
 
     # Read in point clouds of n files and give random color
     clouds = []
-    for i in tqdm(range(len(files_in))):
-        pcl = o3d.io.read_point_cloud(files_in[i])
+    for i in range(len(files_in)):
+        if tensor:
+            pcl = o3d.t.io.read_point_cloud(files_in[i])
+        else:
+            pcl = o3d.io.read_point_cloud(files_in[i])
 
         # Optional down sampling
         if down_sample_size is not None:
