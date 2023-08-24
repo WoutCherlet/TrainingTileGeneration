@@ -676,8 +676,12 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles, tr
     n_non_cuttable = len(non_cuttable_tiles)
 
     # pre extract binned tile and lowest points
-    bins_cuttable = precalc_lowest(cuttable_tiles)
-    bins_non_cuttable = precalc_lowest(non_cuttable_tiles)
+    precalc = False
+    if (n_tiles_x*n_tiles_y) > (n_cuttable + n_non_cuttable):
+        print("Precalculating binned lowest points")
+        bins_cuttable = precalc_lowest(cuttable_tiles)
+        bins_non_cuttable = precalc_lowest(non_cuttable_tiles)
+        precalc = True
 
     
     print(f"Overlaying noise, {n_tiles_x*n_tiles_y} tiles of size {GRID_SIZE}x{GRID_SIZE}")
@@ -709,27 +713,37 @@ def overlay_terrain(noise_2D, noise_coordinates, interpolator, terrain_tiles, tr
             # select tile
             if trunk_in_tile(cur_noise_tile, trunk_corner_points):
                 cur_terrain_tile = cuttable_tiles[cuttable_idx]
-                bins_tuple = bins_cuttable[cuttable_idx]
+                if precalc:
+                    bins_tuple = bins_cuttable[cuttable_idx]
+                else:
+                    bins_tuple = extract_lowest(cur_terrain_tile)
                 cuttable_idx += 1
                 cuttable_idx = cuttable_idx % n_cuttable
                 if cuttable_idx == 0:
-                    # reshuffle tiles and bins in same order
-                    c = list(zip(cuttable_tiles, bins_cuttable))
-                    random.shuffle(c)
-                    cuttable_tiles, bins_cuttable = zip(*c)
+                    if precalc:
+                        # reshuffle tiles and bins in same order
+                        c = list(zip(cuttable_tiles, bins_cuttable))
+                        random.shuffle(c)
+                        cuttable_tiles, bins_cuttable = zip(*c)
+                    else:
+                        random.shuffle(cuttable_tiles)
             else:
                 cur_terrain_tile = non_cuttable_tiles[non_cuttable_idx]
-                bins_tuple = bins_non_cuttable[non_cuttable_idx]
+                if precalc:
+                    bins_tuple = bins_non_cuttable[non_cuttable_idx]
+                else:
+                    bins_tuple = extract_lowest(cur_terrain_tile)
                 non_cuttable_idx += 1
                 non_cuttable_idx = non_cuttable_idx % n_non_cuttable
                 if non_cuttable_idx == 0:
-                    # reshuffle tiles and bins in same order
-                    c = list(zip(non_cuttable_tiles, bins_non_cuttable))
-                    random.shuffle(c)
-                    non_cuttable_tiles, bins_non_cuttable = zip(*c)
+                    if precalc:
+                        # reshuffle tiles and bins in same order
+                        c = list(zip(non_cuttable_tiles, bins_non_cuttable))
+                        random.shuffle(c)
+                        non_cuttable_tiles, bins_non_cuttable = zip(*c)
+                    else:
+                        random.shuffle(non_cuttable_tiles)
             
-            # TODO: randomly rotate tile? also need to rotate bins array which is probably a little expensive
-
             # overlay single noise tile on noise
             noise_cloud, tile_cloud = overlay_single_tile(cur_terrain_tile, cur_noise_tile, interpolator, bins_tuple)
             tiles.append(tile_cloud)
@@ -819,12 +833,15 @@ def build_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes, terrain_ti
     points_3d_cleaned = remove_points_inside_alpha_shape(points_3d_real, alphashapes)
 
     # to pointcloud
-    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float64))
+    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float32))
     terrain_cloud = o3d.t.geometry.PointCloud()
     terrain_cloud.point.positions = tensor_3d
     # add labels to terrain cloud: semantic terrain label is 0, no instance so -1
     terrain_cloud.point.semantic = o3d.core.Tensor(np.zeros(len(points_3d_cleaned), dtype=np.int32)[:,None])
     terrain_cloud.point.instance = o3d.core.Tensor((-1)*np.ones(len(points_3d_cleaned), dtype=np.int32)[:,None])
+
+    # TODO: TEMP: for wouter: add terrain label to "labels" field
+    terrain_cloud.point.labels = o3d.core.Tensor(2*np.ones(len(points_3d_cleaned), dtype=np.int32)[:,None])
 
     return terrain_cloud
 
