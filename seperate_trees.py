@@ -1,9 +1,9 @@
 import os
+import glob
 import pandas as pd
 from tqdm import tqdm
 import open3d as o3d
 import numpy as np
-
 
 from utils import read_clouds, combine_pcds, get_bbox
 
@@ -217,12 +217,12 @@ def get_understory(pc_folder, clipped_tiles_dir, bbox_trees):
     return
 
 
-def kd_tree_redivision(tilename, understory_cloud, tree_cloud):
+def kd_tree_redivision_single(tilename, understory_cloud, tree_cloud):
 
     understory_points = understory_cloud.point.positions.numpy()
     tree_points = tree_cloud.point.positions.numpy()
 
-    understory_instance_labels = np.zeros(understory_points.shape[:1], dtype=np.int32)
+    understory_instance_labels = -1*np.ones(understory_points.shape[:1], dtype=np.int32)
     tree_instance_labels = tree_cloud.point.instance_labels.numpy()
 
     understory_labels = np.zeros(understory_points.shape[:1], dtype=np.int32)
@@ -255,9 +255,14 @@ def kd_tree_redivision(tilename, understory_cloud, tree_cloud):
             corrected_labels[i] = 1
             switching_n += 1
             # if we switch, also get closest instance labels
-            closest_instance_labels = corrected_instance_labels[idx]
-            closest_tree_instances = closest_instance_labels[closest_instance_labels != 0] # 0 can still be most frequent
+            closest_instance_labels = all_instance_labels[idx]
+            closest_tree_instances = closest_instance_labels[closest_instance_labels != -1] # -1 can still be most frequent
             values, counts = np.unique(closest_tree_instances, return_counts=True)
+            if len(counts) == 0:
+                print("DEBUG: got 0-length array for counts, shouldn't happen, skipping this point")
+                print(closest_instance_labels)
+                print(closest_tree_instances)
+                continue
             most_frequent = values[np.argmax(counts)]
             corrected_instance_labels[i] = most_frequent
 
@@ -266,9 +271,7 @@ def kd_tree_redivision(tilename, understory_cloud, tree_cloud):
             print(f"({i+1}/{len(understory_points)})")
 
         
-    print(f"Switched {switching_n} points.")
-
-    # TODO: remove everything in understory cloud above 10 ish meters? PROBLEM: how to detect if something is 10 meter from the ground -> divide into 1 by 1 tiles, get lower bound, ..
+    print(f"Switched {switching_n} of {len(understory_points)} understory points.")
 
     understory_mask = np.logical_not(corrected_labels)
     understory_kd_points = all_points[understory_mask]
@@ -293,6 +296,30 @@ def kd_tree_redivision(tilename, understory_cloud, tree_cloud):
     
     return
 
+
+def kd_tree_redivision_all(clipped_tiles_dir, skip=True):
+    tilenames = [f for f in sorted(os.listdir(clipped_tiles_dir)) if f[-3:] == 'ply']
+
+    understory_dir = os.path.join(DATA_DIR, "seperated", "understory_tiles_close")
+    trees_dir = os.path.join(DATA_DIR, "seperated", "trees_tiles_close")
+
+    for i, tilename in enumerate(tilenames):
+        print(f"Performing kd tree redivision for tile {tilename} ({i+1}/{len(tilenames)})")
+
+        if skip and os.path.exists(os.path.join(DATA_DIR, "seperated", "understory_kd", tilename + "_understory_kd.ply")):
+            print(f"Skipping tile {tilename} as kd files already exist")
+            continue
+
+        if not os.path.exists(os.path.join(understory_dir, "understory_" + tilename)) or not os.path.exists(os.path.join(trees_dir, "trees_" + tilename)):
+            print(f"Trees and/or understory file not found for tilename {tilename}")
+            continue
+        
+        understory_cloud = o3d.t.io.read_point_cloud(os.path.join(understory_dir, "understory_" + tilename))
+        understory_cloud = understory_cloud.voxel_down_sample(voxel_size=0.03)
+        tree_cloud = o3d.t.io.read_point_cloud(os.path.join(trees_dir, "trees_" + tilename))
+        tree_cloud = tree_cloud.voxel_down_sample(voxel_size=0.03)
+        
+        kd_tree_redivision_single(os.path.basename(tilename), understory_cloud, tree_cloud)
 
 
 def display_inlier_outlier(cloud, ind):
@@ -341,18 +368,22 @@ def main():
 
     # get_understory(pc_folder, clipped_tiles_dir, bbox_trees)
 
-    # TODO: TEMP: only one tile
+    kd_tree_redivision_all(clipped_tiles_dir)
 
-    tile_name = "wytham_winter_122.ply"
+    redo_list = [""]
 
-    out_understory = os.path.join(DATA_DIR, "seperated", "understory_tiles_close")
-    understory_cloud = o3d.t.io.read_point_cloud(os.path.join(out_understory, "understory_" + tile_name))
-    understory_cloud = understory_cloud.voxel_down_sample(voxel_size=0.03)
-    out_trees = os.path.join(DATA_DIR, "seperated", "trees_tiles_close")
-    tree_cloud = o3d.t.io.read_point_cloud(os.path.join(out_trees, "trees_" + tile_name))
-    tree_cloud = tree_cloud.voxel_down_sample(voxel_size=0.03)
 
-    kd_tree_redivision(os.path.basename(tile_name), understory_cloud, tree_cloud)
+    # single tile: DEBUG
+    # tile_name = "wytham_winter_122.ply"
+
+    # out_understory = os.path.join(DATA_DIR, "seperated", "understory_tiles_close")
+    # understory_cloud = o3d.t.io.read_point_cloud(os.path.join(out_understory, "understory_" + tile_name))
+    # understory_cloud = understory_cloud.voxel_down_sample(voxel_size=0.03)
+    # out_trees = os.path.join(DATA_DIR, "seperated", "trees_tiles_close")
+    # tree_cloud = o3d.t.io.read_point_cloud(os.path.join(out_trees, "trees_" + tile_name))
+    # tree_cloud = tree_cloud.voxel_down_sample(voxel_size=0.03)
+
+    # kd_tree_redivision_single(os.path.basename(tile_name), understory_cloud, tree_cloud)
 
     
     
