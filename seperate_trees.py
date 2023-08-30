@@ -1,9 +1,9 @@
 import os
-import glob
 import pandas as pd
 from tqdm import tqdm
 import open3d as o3d
 import numpy as np
+import matplotlib.pyplot as plt
 
 from utils import read_clouds, combine_pcds, get_bbox
 
@@ -351,6 +351,31 @@ def retile(tiles):
 
 
 
+def get_xy_view(clipped_tiles_dir):
+    tilenames = [f for f in sorted(os.listdir(clipped_tiles_dir)) if f[-3:] == 'ply']
+    
+    x = []
+    y = []
+    for tilename in tilenames:
+        file = os.path.join(clipped_tiles_dir, tilename)
+
+        pc = o3d.io.read_point_cloud(file)
+
+        center = (pc.get_max_bound() + pc.get_min_bound())/2
+
+        x.append(center[0])
+        y.append(center[1])
+
+    fig, ax = plt.subplots()
+    ax.scatter(x, y)
+
+    for i, txt in enumerate(tilenames):
+        ax.annotate(txt, (x[i], y[i]))
+
+    plt.show()
+    
+
+
 def main():
     pc_folder = os.path.join(DATA_DIR, "trees")
     bbox_extent = os.path.join(DATA_DIR, "extent.csv")
@@ -370,8 +395,7 @@ def main():
 
     kd_tree_redivision_all(clipped_tiles_dir)
 
-    redo_list = [""]
-
+    # get_xy_view(clipped_tiles_dir)
 
     # single tile: DEBUG
     # tile_name = "wytham_winter_122.ply"
