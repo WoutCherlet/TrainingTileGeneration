@@ -18,6 +18,7 @@ from scipy import interpolate
 
 DEBUG = False
 DEBUG_ALPHA_SHAPES = False
+DEBUG_EASY_PLOT = True
 
 SEMANTIC_MAP = {
     0: "terrain",
@@ -87,6 +88,10 @@ def get_initial_tree_position(tree_mesh, pointcloud, noise_2d, max_x_row, max_y_
     min_x_tree, min_y_tree, min_z_tree = tree_mesh.bounds[0]
 
     initial_translation = np.array([max_x_row-min_x_tree, max_y_plot-min_y_tree, -min_z_tree])
+
+    if DEBUG_EASY_PLOT:
+        initial_translation += np.array([3,3,0])
+    
     bbox_transform = trimesh.transformations.translation_matrix(initial_translation)
 
     inverse_bbox_transform = trimesh.transformations.translation_matrix(-initial_translation)
@@ -123,6 +128,8 @@ def move_tree_closer(name, tree_mesh, collision_manager_plot, collision_manager_
     total_translation = np.array([0.0,0.0,0.0])
     placed = False
     if debug:
+        placed = True
+    if DEBUG_EASY_PLOT:
         placed = True
     distance_buffer = 0.05
     i = 1
