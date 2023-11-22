@@ -344,13 +344,6 @@ def post_process_pc():
     display_inlier_outlier(understory_cloud, ind)
 
 
-def retile(tiles):
-    pass
-    # TODO: hardcode retile of wytham tiles into 10 tiles in x direction and 8 in y direction, about 15 metres per side
-    # divide tiles into train, test val on x axis, 6/2/2
-
-
-
 def get_xy_view(clipped_tiles_dir):
     tilenames = [f for f in sorted(os.listdir(clipped_tiles_dir)) if f[-3:] == 'ply']
     
@@ -393,7 +386,7 @@ def main():
 
     # get_understory(pc_folder, clipped_tiles_dir, bbox_trees)
 
-    kd_tree_redivision_all(clipped_tiles_dir)
+    # kd_tree_redivision_all(clipped_tiles_dir)
 
     # get_xy_view(clipped_tiles_dir)
 
