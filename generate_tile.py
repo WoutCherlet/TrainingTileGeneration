@@ -4,6 +4,7 @@ import glob
 import random
 import math as m
 import time
+import copy
 
 import numpy as np
 import open3d as o3d
@@ -840,7 +841,7 @@ def build_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes, terrain_ti
     points_3d_cleaned = remove_points_inside_alpha_shape(points_3d_real, alphashapes)
 
     # to pointcloud
-    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float32))
+    tensor_3d = o3d.core.Tensor(points_3d_cleaned.astype(np.float64))
     terrain_cloud = o3d.t.geometry.PointCloud()
     terrain_cloud.point.positions = tensor_3d
     # add labels to terrain cloud: semantic terrain label is 0, no instance so -1
@@ -852,6 +853,27 @@ def build_terrain(plot_cloud, perlin_noise, trunk_hulls, alphashapes, terrain_ti
 
     return terrain_cloud
 
+
+def rescale_and_translate(plot_cloud):
+    plot_cloud_rescaled = copy.deepcopy(plot_cloud)
+    x_range, y_range, z_range = (plot_cloud_rescaled.get_max_bound() - plot_cloud_rescaled.get_min_bound()).numpy()
+
+    scaling_matrix = np.identity(4, dtype=float)
+    scaling_matrix[0,0] = 1/x_range
+    scaling_matrix[1,1] = 1/y_range
+    scaling_matrix[2,2] = 1/z_range
+
+    plot_cloud_rescaled = plot_cloud_rescaled.transform(o3d.core.Tensor(scaling_matrix))
+
+    translation_matrix = np.identity(4, dtype=float)
+    min_bound = plot_cloud_rescaled.get_min_bound().numpy()
+    translation_matrix[0,3] = -min_bound[0]
+    translation_matrix[1,3] = -min_bound[1]
+    translation_matrix[2,3] = -min_bound[2]
+
+    plot_cloud_rescaled = plot_cloud_rescaled.transform(o3d.core.Tensor(translation_matrix))
+
+    return plot_cloud_rescaled
 
 
 def save_tile(out_dir, out_pc, tile_id, downsampled=True):
@@ -961,13 +983,15 @@ def generate_tile(trees, terrain_tiles, debug=DEBUG):
     if debug:
         terrain_cloud_debug = Tensor2VecPC(terrain_cloud)
         terrain_cloud_debug.paint_uniform_color([0.75,0.75,0.75])
-    
     if debug:
         o3d.visualization.draw_geometries([merged_plot_debug, terrain_cloud_debug])
 
     merged_cloud += terrain_cloud_ds
 
-    return merged_cloud, True
+    # scaling to unit cube and translation to 0,0
+    merged_cloud_rescaled = rescale_and_translate(merged_cloud)
+
+    return merged_cloud, merged_cloud_rescaled, True
 
 def generate_tiles(mesh_dir, pc_dir, tiles_dir, out_dir, alpha=None, n_tiles=10):
     # read trees
@@ -979,14 +1003,17 @@ def generate_tiles(mesh_dir, pc_dir, tiles_dir, out_dir, alpha=None, n_tiles=10)
 
     print(f"Generating {n_tiles} tiles")
     tile_id = 0
+    out_dir_rescaled = os.path.join(out_dir, "rescaled")
+
     while tile_id < n_tiles:
 
         start_time = time.process_time()
-        tile_cloud, tile_ok = generate_tile(trees, terrain_tiles)
+        tile_cloud, tile_cloud_rescaled, tile_ok = generate_tile(trees, terrain_tiles)
         end_time = time.process_time()
         print(f"Generated tile {tile_id+1} in {end_time-start_time} seconds")
         if tile_ok:
             save_tile(out_dir, tile_cloud, tile_id)
+            save_tile(out_dir_rescaled, tile_cloud_rescaled, tile_id)
             tile_id += 1
         else:
             save_tile(os.path.join(out_dir, "too_large_debug"), tile_cloud, tile_id, downsampled=False)
