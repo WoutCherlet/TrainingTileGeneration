@@ -10,6 +10,8 @@ def read_pointclouds(folder):
     for file in os.listdir(folder):
         # read like this to delete custom attributes
         pc = o3d.io.read_point_cloud(os.path.join(folder, file))
+        # remove colors if present, otherwise merge no work
+        pc.colors = o3d.utility.Vector3dVector()
         pc = o3d.t.geometry.PointCloud.from_legacy(pc)
         out[file] = pc
 
@@ -85,18 +87,20 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     val_trees = []
     train_trees = []
 
+    print("dividing trees")
+
     for i, filename in enumerate(filenames):
         pcl = o3d.t.io.read_point_cloud(os.path.join(trees_folder, filename))
 
         # add labels
 
-        pcl.point.semantic = o3d.core.Tensor(np.ones(len(pc.point.positions), dtype=np.int32)[:,None])
-        pcl.point.instance = o3d.core.Tensor((i+1)*np.ones(len(pc.point.positions), dtype=np.int32)[:,None])
+        pcl.point.semantic = o3d.core.Tensor(np.ones(len(pcl.point.positions), dtype=np.int32)[:,None])
+        pcl.point.instance = o3d.core.Tensor((i+1)*np.ones(len(pcl.point.positions), dtype=np.int32)[:,None])
 
         pcl_bbox = pcl.get_axis_aligned_bounding_box()
 
-        bbox_min = pcl_bbox.get_min_bound()
-        bbox_max = pcl_bbox.get_max_bound()
+        bbox_min = pcl_bbox.min_bound
+        bbox_max = pcl_bbox.max_bound
 
         bbox_center = bbox_min + (bbox_max - bbox_min)/2
 
@@ -117,6 +121,8 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     test_tiles = []
     val_tiles = []
     train_tiles = []
+
+    print("dividing understory tiles")
     
     for tile in understory_tiles_dict:
         pc = understory_tiles_dict[tile]
@@ -143,6 +149,7 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     train_merged.point.semantic = o3d.core.Tensor(np.zeros(len(train_merged.point.positions), dtype=np.int32)[:,None])
     train_merged.point.instance = o3d.core.Tensor((-1)*np.ones(len(train_merged.point.positions), dtype=np.int32)[:,None])
 
+    print("merging trees and understory")
 
     # merge trees
     test_trees_pc = merge_all(test_trees)
@@ -173,11 +180,6 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     test_sliced = test_plot_pc.crop(test_bbox)
     val_sliced = val_plot_pc.crop(val_bbox)
     train_sliced = train_plot_pc.crop(train_bbox)
-
-    # remove color (still colored from manual cleaning)
-    test_sliced.colors = o3d.core.Tensor()
-    val_sliced.colors = o3d.core.Tensor()
-    train_sliced.colors = o3d.core.Tensor()
 
     # write out test, val and train plots as temp
     o3d.t.io.write_point_cloud(os.path.join(odir, "test_merged.ply"), test_sliced)
@@ -217,7 +219,7 @@ def tile_area(merged_area, x_n, y_n, odir):
             tile_bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound = tile_min_bound, max_bound = tile_max_bound)
             tile_pc = merged_area.crop(tile_bbox)
 
-            o3d.io.write_point_cloud(os.path.join(odir, f"Tile{tile_n}.ply"), tile_pc)
+            o3d.io.write_point_cloud(os.path.join(odir, f"Wytham_Tile{tile_n}.ply"), tile_pc)
             tile_n += 1
 
             # TODO: temp: shift and save
@@ -256,23 +258,6 @@ def tile_wytham(merged_area_dir):
     test_pc = o3d.io.read_point_cloud(os.path.join(merged_area_dir, "test_merged.ply"))
 
     tile_area(test_pc, x_n=2, y_n=11, odir=odir)
-
-
-
-def relabel_tile(tile):
-    # TODO: read in tile, seperate into trees based on instance labels
-    # relabel all trees to start at 1
-
-    # TODO: check if this is necessary?
-
-    # could also do this in preprocessing realy easily, instance_labels = instance_labels - min(instance_labels) + 1
-
-    pass
-
-
-
-# TODO: maybe remove any instance with only 1000 or so points in tile? 
-    
 
 
 def main():

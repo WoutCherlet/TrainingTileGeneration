@@ -881,7 +881,7 @@ def save_tile(out_dir, out_pc, tile_id, downsampled=True):
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
 
-    out_path = os.path.join(out_dir, f"Tile_{tile_id}.ply")
+    out_path = os.path.join(out_dir, f"Synthetic_Tile_{tile_id}.ply")
 
     while os.path.exists(out_path):
         tile_id += 1
