@@ -193,8 +193,8 @@ def tile_area(merged_area, x_n, y_n, odir):
 
     OVERLAP = 5
 
-    min_bound = merged_area.get_min_bound()
-    max_bound = merged_area.get_max_bound()
+    min_bound = merged_area.get_min_bound().numpy()
+    max_bound = merged_area.get_max_bound().numpy()
 
 
     x_tile_size = (max_bound[0] - min_bound[0] - OVERLAP) / x_n + OVERLAP
@@ -216,10 +216,10 @@ def tile_area(merged_area, x_n, y_n, odir):
             tile_max_bound[0] = tile_min_bound[0] + x_tile_size
             tile_max_bound[1] = tile_min_bound[1] + y_tile_size
 
-            tile_bbox = o3d.geometry.AxisAlignedBoundingBox(min_bound = tile_min_bound, max_bound = tile_max_bound)
+            tile_bbox = o3d.t.geometry.AxisAlignedBoundingBox(min_bound = tile_min_bound, max_bound = tile_max_bound)
             tile_pc = merged_area.crop(tile_bbox)
 
-            o3d.io.write_point_cloud(os.path.join(odir, f"Wytham_Tile{tile_n}.ply"), tile_pc)
+            o3d.t.io.write_point_cloud(os.path.join(odir, f"Wytham_Tile{tile_n}.ply"), tile_pc)
             tile_n += 1
 
             # TODO: temp: shift and save
@@ -237,7 +237,7 @@ def tile_wytham(merged_area_dir):
     odir = os.path.join(merged_area_dir, "tiles", "train")
     if not os.path.exists(odir):
         os.makedirs(odir)
-    train_pc = o3d.io.read_point_cloud(os.path.join(merged_area_dir, "train_merged.ply"))
+    train_pc = o3d.t.io.read_point_cloud(os.path.join(merged_area_dir, "train_merged.ply"))
 
     tile_area(train_pc, x_n=6, y_n=11, odir=odir)
 
@@ -246,7 +246,7 @@ def tile_wytham(merged_area_dir):
     odir = os.path.join(merged_area_dir, "tiles", "val")
     if not os.path.exists(odir):
         os.makedirs(odir)
-    validation_pc = o3d.io.read_point_cloud(os.path.join(merged_area_dir, "val_merged.ply"))
+    validation_pc = o3d.t.io.read_point_cloud(os.path.join(merged_area_dir, "val_merged.ply"))
 
     tile_area(validation_pc, x_n=2, y_n=11, odir=odir)
 
@@ -255,7 +255,7 @@ def tile_wytham(merged_area_dir):
     odir = os.path.join(merged_area_dir, "tiles", "test")
     if not os.path.exists(odir):
         os.makedirs(odir)
-    test_pc = o3d.io.read_point_cloud(os.path.join(merged_area_dir, "test_merged.ply"))
+    test_pc = o3d.t.io.read_point_cloud(os.path.join(merged_area_dir, "test_merged.ply"))
 
     tile_area(test_pc, x_n=2, y_n=11, odir=odir)
 
@@ -276,9 +276,9 @@ def main():
     if not os.path.exists(odir):
         os.mkdir(odir)
 
-    trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder, odir)
+    # trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder, odir)
 
-    # tile_wytham(odir)
+    tile_wytham(odir)
 
 
     return
