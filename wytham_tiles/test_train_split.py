@@ -53,10 +53,6 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     bound_x_min = min_bound[0]
     bound_x_max = max_bound[0]
 
-
-    test_x_max = bound_x_min + 1/5*(bound_x_max - bound_x_min)
-    val_x_max = test_x_max + 1/5*(bound_x_max - bound_x_min)
-
     train_odir = os.path.join(odir, "trees", "train")
     if not os.path.exists(train_odir):
         os.makedirs(train_odir)
@@ -71,7 +67,7 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     # Make mapping of tree file to unique number 
     filenames = [f for f in os.listdir(trees_folder) if f[-3:] == 'ply']
 
-    # Divide wytham plot into 80 tiles
+    ### Divide wytham plot into 80 tiles
     # 10 across 135m. length x-axis
     # 8 across 88m. length y-axis
 
@@ -80,8 +76,9 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     # 20 % test
     # 20 % val
     # 60 % train
-    # any tree with at least 5 meters of bbox over val is also assigned to val
-    # for train/val just put wherever center is
+
+    test_x_max = bound_x_min + 1/5*(bound_x_max - bound_x_min)
+    val_x_max = test_x_max + 1/5*(bound_x_max - bound_x_min)
 
     test_trees = []
     val_trees = []
@@ -102,15 +99,14 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
         bbox_min = pcl_bbox.min_bound
         bbox_max = pcl_bbox.max_bound
 
-        bbox_center = bbox_min + (bbox_max - bbox_min)/2
-
-        if bbox_center[0] < test_x_max:
+        # any tree that overlaps with test/val/train areas is
+        if bbox_min[0] < test_x_max:
             out_path = os.path.join(test_odir, filename)
             test_trees.append(pcl)
-        elif bbox_center[0] < val_x_max or bbox_min[0] < (val_x_max - 5):
+        if bbox_min[0] < val_x_max and bbox_max[0] > test_x_max:
             out_path = os.path.join(val_odir, filename)
             val_trees.append(pcl)
-        else:
+        if bbox_max[0] > val_x_max:
             out_path = os.path.join(train_odir, filename)
             train_trees.append(pcl)
 
@@ -159,6 +155,7 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     test_plot_pc = test_trees_pc + test_merged
     val_plot_pc = val_trees_pc + val_merged
     train_plot_pc = train_trees_pc + train_merged
+
 
 
     # slice merged test, val and train pointclouds into actual sizes
