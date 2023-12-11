@@ -190,21 +190,23 @@ def trees_test_train_split(tree_tiles_dict, understory_tiles_dict, trees_folder,
     return
 
 
-def tile_area(merged_area, x_n, y_n, odir, trees_odir=None):
-
-    OVERLAP = 5
+def tile_area(merged_area, x_n, y_n, odir, trees_odir=None, overlap=5):
 
     min_bound = merged_area.get_min_bound().numpy()
     max_bound = merged_area.get_max_bound().numpy()
 
-
-    x_tile_size = (max_bound[0] - min_bound[0] - OVERLAP) / x_n + OVERLAP
-    y_tile_size = (max_bound[1] - min_bound[1] - OVERLAP) / y_n + OVERLAP
+    x_tile_size = (max_bound[0] - min_bound[0] - overlap) / x_n + overlap
+    y_tile_size = (max_bound[1] - min_bound[1] - overlap) / y_n + overlap
 
     print(f"Tile sizes: {x_tile_size}, {y_tile_size}")
 
     if trees_odir is not None:
         trees = read_pointclouds(trees_odir)
+
+    
+    if overlap != 5:
+        odir = os.path.join(odir, f"overlap_{overlap}")
+        trees_odir = os.path.join(trees_odir, f"overlap_{overlap}")
 
     tile_n = 0
 
@@ -213,8 +215,8 @@ def tile_area(merged_area, x_n, y_n, odir, trees_odir=None):
     for i in range(x_n):
         for j in range(y_n):
             tile_min_bound = min_bound.copy()
-            tile_min_bound[0] += i*(x_tile_size - OVERLAP)
-            tile_min_bound[1] += j*(y_tile_size - OVERLAP)
+            tile_min_bound[0] += i*(x_tile_size - overlap)
+            tile_min_bound[1] += j*(y_tile_size - overlap)
 
             tile_max_bound = max_bound.copy()
             tile_max_bound[0] = tile_min_bound[0] + x_tile_size
@@ -230,9 +232,9 @@ def tile_area(merged_area, x_n, y_n, odir, trees_odir=None):
 
             # extra: keep track of trees on tile
             if trees_odir is not None:
-                odir = os.path.join(trees_odir, cur_tile)
+                tile_trees_odir = os.path.join(trees_odir, cur_tile)
 
-                trees_in_plot(tile_pc, trees, odir, threshold=0.9, output_all=True)
+                trees_in_plot(tile_pc, trees, tile_trees_odir, threshold=0.9, output_all=True)
 
             # TODO: temp: shift and save
             # tile_pc = tile_pc.translate(np.array([i*7, j*7, 0]))
@@ -246,6 +248,8 @@ def tile_wytham(merged_area_dir):
 
     # training area
 
+    print("Tiling training area with overlap 5")
+
     odir = os.path.join(merged_area_dir, "tiles", "train")
     if not os.path.exists(odir):
         os.makedirs(odir)
@@ -255,6 +259,8 @@ def tile_wytham(merged_area_dir):
 
     # val area
 
+    print("Tiling validation area with overlap 5")
+
     odir = os.path.join(merged_area_dir, "tiles", "val")
     if not os.path.exists(odir):
         os.makedirs(odir)
@@ -263,6 +269,7 @@ def tile_wytham(merged_area_dir):
     tile_area(validation_pc, x_n=2, y_n=11, odir=odir)
 
     # test area
+
 
     odir = os.path.join(merged_area_dir, "tiles", "test")
     if not os.path.exists(odir):
@@ -274,9 +281,16 @@ def tile_wytham(merged_area_dir):
     # for test: also divide trees into eval and non-eval trees
     test_trees = read_pointclouds(trees_odir)
     odir_trees = os.path.join(merged_area_dir, "test_trees_thresholded")
-    trees_in_plot(test_pc, test_trees, merged_area_dir, threshold=0.9, output_all=True)
+    trees_in_plot(test_pc, test_trees, odir_trees, threshold=0.9, output_all=True)
+
+
+    print("Tiling testing area with overlap 5")
 
     tile_area(test_pc, x_n=2, y_n=11, odir=odir, trees_odir=trees_odir)
+
+    print("Tiling testing area with no overlap")
+
+    tile_area(test_pc, x_n=2, y_n=11, odir=odir, trees_odir=trees_odir, overlap=0)
 
 
 
